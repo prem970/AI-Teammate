@@ -21,12 +21,19 @@ interface ChatInterfaceProps {
   customer: Customer;
   initialOrderId?: string;
   initialTid?: string;
+  /** Prefill + optional auto-send for demo customer issues */
+  initialPrompt?: string;
+  autoSendPrompt?: boolean;
+  issueBanner?: { escalationId: string; issue: string };
 }
 
 export function ChatInterface({
   customer,
   initialOrderId,
   initialTid,
+  initialPrompt,
+  autoSendPrompt = false,
+  issueBanner,
 }: ChatInterfaceProps) {
   const router = useRouter();
 
@@ -34,30 +41,22 @@ export function ChatInterface({
     {
       id: "msg-welcome",
       sender: "assistant",
-      text: `Hello ${customer.name}, welcome to the Autonomous AI OS self-serve support. I am continuously monitoring your SoundBox 4G units, POS terminals, and UPI settlement streams for **${customer.businessName}**. How can I assist you right now?`,
+      text: `Hello ${customer.name}. I'm your support assistant for **${customer.businessName}**. Ask about orders, devices, or settlements. If human judgment is required, I'll open a case for Ops automatically — you don't need to escalate.`,
       timestamp: "Just now",
-      trace: {
-        intent: "MERCHANT_SESSION_INITIALIZATION",
-        agentsInvolved: ["AutonomousSupervisorAgent", "MerchantProfileAgent"],
-        decision: "SESSION_ESTABLISHED",
-        policyId: "POL-CORE-HELP-V1",
-        confidence: 0.99,
-        latencyMs: 110,
-        timestamp: new Date().toISOString(),
-      },
     },
   ]);
 
-  const [inputMessage, setInputMessage] = useState("");
+  const [inputMessage, setInputMessage] = useState(initialPrompt || "");
   const [selectedOrderId, setSelectedOrderId] = useState<string | undefined>(
-    initialOrderId || "ORD-DUP-1001"
+    initialOrderId
   );
-  const [selectedTid, setSelectedTid] = useState<string | undefined>(
-    initialTid || "TID-SBX-82931"
-  );
+  const [selectedTid, setSelectedTid] = useState<string | undefined>(initialTid);
   const [isLoading, setIsLoading] = useState(false);
   const [lastError, setLastError] = useState<string | null>(null);
-
+  const [openCases, setOpenCases] = useState<
+    Array<{ escalationId: string; issue: string; status: string }>
+  >([]);
+  const autoSentRef = useRef(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const scrollToBottom = () => {
@@ -118,6 +117,70 @@ export function ChatInterface({
       };
 
       setMessages((prev) => [...prev, assistantMessage]);
+      if (Array.isArray(data.open_escalations)) {
+        setOpenCases(
+          data.open_escalations.map(
+            (e: { escalationId: string; issue: string; status: string }) => ({
+              escalationId: e.escalationId,
+              issue: e.issue,
+              status: e.status,
+            })
+          )
+        );
+      }
+      if (data.hil?.detected_from_tools) {
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `hil-${Date.now()}`,
+            sender: "system",
+            text: `Case opened for Ops (from tools → Cosmos). Status is view-only.${
+              data.hil.packages?.[0]
+                ? ` ${data.hil.packages[0].escalationId}: ${data.hil.packages[0].status}`
+                : ""
+            }`,
+            timestamp: new Date().toLocaleTimeString([], {
+              hour: "2-digit",
+              minute: "2-digit",
+            }),
+          },
+        ]);
+      }
+      if (Array.isArray(data.suggestedActions) && data.suggestedActions.length > 0) {
+        // Attach lightweight action chips as a system note only for view/status
+        const viewOnly = data.suggestedActions.filter(
+          (a: { action?: string }) =>
+            a.action === "VIEW_ESCALATION" ||
+            a.action === "VIEW_ORDER" ||
+            a.action === "VIEW_DEVICE" ||
+            a.action === "VIEW_ORDERS"
+        );
+        if (viewOnly.length) {
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: `sys-${Date.now()}`,
+              sender: "system",
+              text: viewOnly.map((a: { label: string }) => a.label).join(" · "),
+              timestamp: new Date().toLocaleTimeString([], {
+                hour: "2-digit",
+                minute: "2-digit",
+              }),
+              contextPills: viewOnly
+                .filter((a: { action?: string; targetId?: string }) => a.targetId)
+                .map((a: { action: string; targetId: string }) => ({
+                  type:
+                    a.action === "VIEW_ESCALATION"
+                      ? ("escalation" as const)
+                      : a.action === "VIEW_DEVICE"
+                        ? ("device" as const)
+                        : ("order" as const),
+                  id: a.targetId,
+                })),
+            },
+          ]);
+        }
+      }
     } catch {
       setLastError("Network connection lost. Failed to send message to /api/chat.");
     } finally {
@@ -150,15 +213,14 @@ export function ChatInterface({
           <div>
             <div className="flex items-center gap-2">
               <h2 className="text-sm font-bold font-display text-white">
-                Autonomous CS Orchestrator
+                Support chat (CS Orchestrator)
               </h2>
               <span className="flex h-2 w-2 relative">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75" />
                 <span className="relative inline-flex rounded-full h-2 w-2 bg-cyan-500" />
               </span>
             </div>
             <p className="text-[11px] text-slate-400 font-mono">
-              Direct Server Pipeline via <code className="text-cyan-400">POST /api/chat</code>
+              Cases with Ops open automatically when needed — you cannot self-escalate.
             </p>
           </div>
         </div>
@@ -197,6 +259,24 @@ export function ChatInterface({
         </div>
       </div>
 
+      {openCases.length > 0 && (
+        <div className="px-5 py-2.5 border-b border-amber-500/30 bg-amber-500/10 text-xs text-amber-100 flex flex-wrap items-center gap-3">
+          <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+          <span className="font-mono">{openCases.length} case(s) with Ops (view-only):</span>
+          {openCases.slice(0, 3).map((c) => (
+            <button
+              key={c.escalationId}
+              type="button"
+              onClick={() => router.push(`/customer/escalations/${c.escalationId}`)}
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded border border-amber-500/40 text-amber-200 hover:bg-amber-500/20 font-mono"
+            >
+              {c.escalationId}
+              <ExternalLink className="w-3 h-3" />
+            </button>
+          ))}
+        </div>
+      )}
+
       {/* Quick Prompts Bar */}
       <div className="px-5 py-2.5 bg-surface-elevated/40 border-b border-surface-border flex items-center gap-2 overflow-x-auto text-xs">
         <span className="text-[11px] font-mono text-slate-400 shrink-0 flex items-center gap-1">
@@ -205,38 +285,51 @@ export function ChatInterface({
         <button
           type="button"
           onClick={() =>
-            handleSendMessage("Why was order ORD-DUP-1001 flagged for dual debit? Reconcile status.")
+            handleSendMessage(
+              "Order ORD-DUP-1001 duplicate payment refund was done. How many days will it take for the money to show in my bank? Someone said 7 days — is that still correct? (policy POL-PAY-REFUND-CREDIT)"
+            )
           }
-          className="shrink-0 px-2.5 py-1 rounded-full bg-surface-secondary hover:bg-surface-elevated text-slate-300 hover:text-cyan-300 border border-surface-border text-xs transition-colors"
+          className="shrink-0 px-2.5 py-1 rounded-full bg-amber-500/15 hover:bg-amber-500/25 text-amber-200 border border-amber-500/40 text-xs transition-colors"
         >
-          Reconcile ORD-DUP-1001 (Dispute)
+          Refund bank days (v1.1 demo)
         </button>
         <button
           type="button"
           onClick={() =>
-            handleSendMessage("Run an acoustic and network telemetry test on SoundBox TID-SBX-82931.")
+            handleSendMessage(
+              "Hot SoundBox demo lead this morning for weekend rush — what is the first-touch SLA now? Is 3 hours still OK? (policy POL-SBX-LEAD-SLA)"
+            )
           }
-          className="shrink-0 px-2.5 py-1 rounded-full bg-surface-secondary hover:bg-surface-elevated text-slate-300 hover:text-cyan-300 border border-surface-border text-xs transition-colors"
+          className="shrink-0 px-2.5 py-1 rounded-full bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-200 border border-emerald-500/40 text-xs transition-colors"
         >
-          SoundBox Telemetry Check
+          Hot lead SLA (v1.1 demo)
         </button>
         <button
           type="button"
           onClick={() =>
-            handleSendMessage("What is my current settlement balance and next clearing window?")
+            handleSendMessage("What is the status of order ORD-DUP-1001?")
           }
           className="shrink-0 px-2.5 py-1 rounded-full bg-surface-secondary hover:bg-surface-elevated text-slate-300 hover:text-cyan-300 border border-surface-border text-xs transition-colors"
         >
-          Settlement Balance
+          ORD-DUP-1001 status
         </button>
         <button
           type="button"
           onClick={() =>
-            handleSendMessage("Please test trigger_error to simulate orchestrator offline state.")
+            handleSendMessage("What is my SoundBox status for TID-SBX-82931?")
           }
-          className="shrink-0 px-2 py-0.5 rounded-full bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/30 text-[11px] font-mono transition-colors"
+          className="shrink-0 px-2.5 py-1 rounded-full bg-surface-secondary hover:bg-surface-elevated text-slate-300 hover:text-cyan-300 border border-surface-border text-xs transition-colors"
         >
-          Test Error State
+          SoundBox status
+        </button>
+        <button
+          type="button"
+          onClick={() =>
+            handleSendMessage("Do I have any cases currently with Ops?")
+          }
+          className="shrink-0 px-2.5 py-1 rounded-full bg-surface-secondary hover:bg-surface-elevated text-slate-300 hover:text-cyan-300 border border-surface-border text-xs transition-colors"
+        >
+          Cases with Ops?
         </button>
       </div>
 
