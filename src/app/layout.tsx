@@ -23,7 +23,7 @@ const jetbrainsMono = JetBrains_Mono({
 export const metadata: Metadata = {
   title: "Autonomous AI OS | Merchant Support & Operations Portal",
   description:
-    "Next-generation autonomous operating system for Paytm merchants. Real-time SoundBox telemetry, automated dispute reconciliation, and intelligent hardware diagnostics.",
+    "Autonomous AI OS portals for merchants and ops. Chat uses n8n Orchestrator; ledger/hardware/escalations read Cosmos when configured.",
 };
 
 export default function RootLayout({
@@ -35,8 +35,12 @@ export default function RootLayout({
     <html
       lang="en"
       className={`${jakartaSans.variable} ${spaceGrotesk.variable} ${jetbrainsMono.variable} dark`}
+      suppressHydrationWarning
     >
-      <body className="bg-background text-slate-100 font-sans antialiased min-h-screen selection:bg-cyan-500/20 selection:text-cyan-300">
+      <body
+        className="bg-background text-slate-100 font-sans antialiased min-h-screen selection:bg-cyan-500/20 selection:text-cyan-300"
+        suppressHydrationWarning
+      >
         {children}
       </body>
     </html>
