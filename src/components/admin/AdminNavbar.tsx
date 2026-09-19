@@ -58,18 +58,18 @@ export function AdminNavbar({ session }: AdminNavbarProps) {
       <div className="bg-[#070b18] border-b border-surface-border/40 px-4 py-1 text-xs text-slate-400">
         <div className="max-w-7xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <span className="flex items-center gap-1.5 text-emerald-400 font-mono text-[11px] font-bold">
-              <span className="h-2 w-2 rounded-full bg-emerald-400 animate-ping" />
-              CLUSTER HEALTH: OPTIMAL (11/11 AGENTS ACTIVE)
+            <span className="flex items-center gap-1.5 text-amber-300 font-mono text-[11px] font-bold">
+              <span className="h-2 w-2 rounded-full bg-amber-400" />
+              ADMIN CONSOLE — AGENT CATALOG IS DOCUMENTATION (NOT LIVE HEARTBEATS)
             </span>
             <span className="hidden md:inline text-slate-600">|</span>
             <span className="hidden md:inline text-slate-300 font-mono text-[11px]">
-              MCP Protocol: <strong className="text-white">v2024-11-05 (Single Boundary)</strong>
+              MCP: <strong className="text-white">probe Integrations for reachability</strong>
             </span>
           </div>
 
           <div className="flex items-center gap-3 font-mono text-[11px] text-slate-400">
-            <span className="text-cyan-400 hidden sm:inline">24h Volume: 18,420 Req</span>
+            <span className="text-slate-400 hidden sm:inline">Metrics pages may show sample charts</span>
             <span className="text-slate-600 hidden sm:inline">•</span>
             <span className="text-slate-300">Admin Role: Superuser</span>
           </div>

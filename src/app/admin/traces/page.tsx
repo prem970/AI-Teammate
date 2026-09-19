@@ -34,7 +34,7 @@ export default function AdminTracesListPage() {
         <div className="flex items-center gap-2 text-xs font-mono text-slate-400">
           <span className="text-emerald-400 flex items-center gap-1.5 font-bold">
             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
-            Live Trace Ingress Active
+            Sample Trace Catalog (not live ingress)
           </span>
         </div>
       </div>

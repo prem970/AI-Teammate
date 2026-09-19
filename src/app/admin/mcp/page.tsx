@@ -161,7 +161,7 @@ export default function AdminMcpArchitecturePage() {
             href="/admin/traces/TRC-2026-DENY-01"
             className="text-xs font-mono text-cyan-400 hover:underline flex items-center gap-1.5 font-bold"
           >
-            <span>Inspect Live Trace TRC-2026-DENY-01</span>
+            <span>Inspect sample deny trace TRC-2026-DENY-01</span>
             <ArrowRight className="w-3.5 h-3.5" />
           </Link>
           <Link
