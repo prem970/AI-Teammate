@@ -1,7 +1,13 @@
 import React from "react";
 import Link from "next/link";
 import { getCurrentCustomerSession } from "@/lib/auth";
-import { getCustomer, getOrders, getDevices, getEscalations } from "@/lib/mockData";
+import {
+  findCustomerById,
+  listOrders,
+  listDevices,
+  listCustomerEscalations,
+  isCosmosLive,
+} from "@/lib/cosmos/repository";
 import {
   MessageSquare,
   Receipt,
@@ -15,14 +21,33 @@ import {
 } from "lucide-react";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { PulseIndicator } from "@/components/ui/PulseIndicator";
+import { DataOriginBanner } from "@/components/ui/DataOriginBanner";
+
+export const dynamic = "force-dynamic";
 
 export default async function CustomerHomePage() {
   const session = await getCurrentCustomerSession();
   const customerId = session?.customerId || "CUST-10291";
-  const customer = getCustomer(customerId);
-  const orders = getOrders(customerId);
-  const devices = getDevices();
-  const escalations = getEscalations(customerId);
+  const origin = isCosmosLive() ? "cosmos" : "unavailable";
+  const customer =
+    (await findCustomerById(customerId)) || {
+      id: customerId,
+      mid: "UNKNOWN",
+      name: session?.name || "Merchant",
+      email: session?.email || "",
+      businessName: session?.name || "Merchant",
+      businessType: "Merchant",
+      segment: "unknown",
+      preferredChannel: "WhatsApp" as const,
+      phone: "",
+      registeredDate: "",
+      settlementAccount: "Unavailable",
+      kycStatus: "PENDING_UPDATE" as const,
+    };
+  const orders = origin === "cosmos" ? await listOrders(customerId) : [];
+  const devices = origin === "cosmos" ? await listDevices(customerId) : [];
+  const escalations =
+    origin === "cosmos" ? await listCustomerEscalations(customerId) : [];
 
   const openEscalations = escalations.filter((e) => e.status !== "RESOLVED");
   const disputedOrders = orders.filter((o) => o.status === "disputed");
@@ -30,6 +55,7 @@ export default async function CustomerHomePage() {
 
   return (
     <div className="space-y-8">
+      <DataOriginBanner origin={origin} />
       {/* Hero Signal Header */}
       <section className="relative p-6 sm:p-10 rounded-2xl bg-gradient-to-br from-surface to-surface-secondary border border-surface-border overflow-hidden">
         <div className="absolute top-0 right-0 w-96 h-96 bg-cyan-500/10 rounded-full blur-3xl pointer-events-none" />
@@ -38,8 +64,8 @@ export default async function CustomerHomePage() {
           <div className="space-y-3">
             <div className="flex flex-wrap items-center gap-2.5">
               <PulseIndicator
-                label="Autonomous AI OS Active"
-                sublabel="Continuous merchant telemetry sync"
+                label="Merchant portal"
+                sublabel="Orders & devices from Cosmos; chat via n8n Orchestrator"
               />
               <span className="text-xs font-mono px-2.5 py-1 rounded bg-slate-800/80 border border-slate-700 text-slate-300">
                 MID: <strong className="text-white">{customer.mid}</strong>
@@ -50,12 +76,11 @@ export default async function CustomerHomePage() {
               Welcome, <span className="text-gradient-cyan">{customer.name}</span>
             </h1>
             <p className="text-slate-300 text-sm sm:text-base max-w-2xl font-sans">
-              Self-serve hub for <strong className="text-white">{customer.businessName}</strong>. 
-              The Autonomous AI OS handles dual debits, hardware pings, and payment settlements automatically.
+              Self-serve hub for <strong className="text-white">{customer.businessName}</strong>.
+              Support chat routes to the live CS Orchestrator; ledger and hardware views read Cosmos.
             </p>
           </div>
 
-          {/* Direct CTA into Chat */}
           <div className="flex flex-col sm:flex-row items-stretch md:items-center gap-3 shrink-0">
             <Link
               href="/customer/chat"
@@ -79,12 +104,12 @@ export default async function CustomerHomePage() {
             <div>
               <div className="flex items-center gap-2">
                 <h2 className="text-sm font-bold text-rose-200">
-                  Active Escalation: {openEscalations[0].escalationId}
+                  Case with Ops: {openEscalations[0].escalationId}
                 </h2>
                 <StatusBadge type="escalation" value={openEscalations[0].status} />
               </div>
               <p className="text-xs text-rose-300/80 mt-1 max-w-3xl">
-                {openEscalations[0].issue}
+                {openEscalations[0].issue} — opened automatically by support. Status is view-only.
               </p>
             </div>
           </div>
@@ -92,7 +117,7 @@ export default async function CustomerHomePage() {
             href={`/customer/escalations/${openEscalations[0].escalationId}`}
             className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 text-rose-200 text-xs font-mono font-medium shrink-0 border border-rose-500/40 transition-colors"
           >
-            <span>Review Package</span>
+            <span>View status</span>
             <ArrowRight className="w-3.5 h-3.5" />
           </Link>
         </section>
@@ -116,7 +141,7 @@ export default async function CustomerHomePage() {
             </div>
 
             <p className="text-xs text-slate-400 mb-5">
-              Live telemetry for paired Paytm SoundBox 4G units and Android smart POS devices.
+              Device inventory for paired SoundBox / POS units from Cosmos.
             </p>
 
             <div className="space-y-3">
@@ -164,7 +189,7 @@ export default async function CustomerHomePage() {
             </div>
 
             <p className="text-xs text-slate-400 mb-5">
-              Real-time transaction stream with automated duplicate debit detection.
+              Orders and payment collections from Cosmos for this merchant.
             </p>
 
             <div className="space-y-3">
@@ -242,7 +267,7 @@ export default async function CustomerHomePage() {
                   <Activity className="w-3.5 h-3.5 text-cyan-400" />
                   PaymentDisputeAgent
                 </span>
-                <span className="text-emerald-400 text-[11px]">ACTIVE (0ms lag)</span>
+                <span className="text-emerald-400 text-[11px]">ORCHESTRATOR WEBHOOK</span>
               </div>
 
               <div className="p-2.5 rounded-lg bg-surface-secondary/70 border border-surface-border flex items-center justify-between">
@@ -250,7 +275,7 @@ export default async function CustomerHomePage() {
                   <Activity className="w-3.5 h-3.5 text-cyan-400" />
                   HardwareTelemetryAgent
                 </span>
-                <span className="text-emerald-400 text-[11px]">PINGING (142ms)</span>
+                <span className="text-slate-400 text-[11px]">COSMOS DEVICE RECORDS</span>
               </div>
 
               <div className="p-2.5 rounded-lg bg-surface-secondary/70 border border-surface-border flex items-center justify-between">
