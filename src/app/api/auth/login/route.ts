@@ -1,52 +1,68 @@
 import { NextRequest, NextResponse } from "next/server";
-import { AUTH_COOKIE_NAME, CustomerSession } from "@/lib/auth";
-import { MOCK_CUSTOMERS } from "@/lib/mockData";
-
-import { Customer } from "@/lib/types";
+import { findCustomerByEmail, findCustomerById, isCosmosLive } from "@/lib/cosmos/repository";
+import { AUTH_COOKIE_NAME } from "@/lib/auth";
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { email, customerId } = body;
+    const email = String(body.email || "").trim();
+    const customerIdHint = String(body.customerId || "").trim();
 
-    // Pick customer by explicit customerId or match email, default to CUST-10291
-    let matchedCustomer: Customer | undefined = customerId ? MOCK_CUSTOMERS[customerId] : undefined;
-    if (!matchedCustomer && email) {
-      matchedCustomer = Object.values(MOCK_CUSTOMERS).find(
-        (c) => c.email.toLowerCase() === email.toLowerCase()
+    if (!email && !customerIdHint) {
+      return NextResponse.json({ success: false, error: "Email or customerId required" }, { status: 400 });
+    }
+
+    if (!isCosmosLive()) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Azure Cosmos is not configured. Cannot authenticate against original merchant records.",
+        },
+        { status: 503 }
       );
     }
-    const finalCustomer: Customer = matchedCustomer || MOCK_CUSTOMERS["CUST-10291"];
 
-    const session: CustomerSession = {
-      customerId: finalCustomer.id,
-      role: "customer",
-      name: finalCustomer.name,
-      email: finalCustomer.email,
+    let customer =
+      (email ? await findCustomerByEmail(email) : null) ||
+      (customerIdHint ? await findCustomerById(customerIdHint) : null);
+
+    // Allow login by customerId pasted in email field (demo convenience)
+    if (!customer && email.toUpperCase().startsWith("CUST-")) {
+      customer = await findCustomerById(email.toUpperCase());
+    }
+
+    if (!customer) {
+      return NextResponse.json(
+        { success: false, error: "Merchant not found in Cosmos customers container" },
+        { status: 401 }
+      );
+    }
+
+    const session = {
+      customerId: customer.id,
+      role: "customer" as const,
+      name: customer.name,
+      email: customer.email,
       authenticatedAt: new Date().toISOString(),
     };
 
     const response = NextResponse.json({
       success: true,
-      session,
-      redirectTo: "/customer",
+      customer: { id: customer.id, name: customer.name, email: customer.email },
+      dataOrigin: "cosmos",
     });
 
-    response.cookies.set({
-      name: AUTH_COOKIE_NAME,
-      value: encodeURIComponent(JSON.stringify(session)),
+    response.cookies.set(AUTH_COOKIE_NAME, encodeURIComponent(JSON.stringify(session)), {
       httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
       sameSite: "lax",
       path: "/",
-      maxAge: 60 * 60 * 24 * 7, // 7 days
+      secure: process.env.NODE_ENV === "production",
+      maxAge: 60 * 60 * 12,
     });
 
     return response;
-  } catch {
-    return NextResponse.json(
-      { success: false, error: "Invalid login payload" },
-      { status: 400 }
-    );
+  } catch (err: unknown) {
+    const error = err instanceof Error ? err.message : "Login failed";
+    return NextResponse.json({ success: false, error }, { status: 500 });
   }
 }

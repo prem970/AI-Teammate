@@ -26,10 +26,13 @@ export async function POST(request: NextRequest) {
       authenticatedAt: new Date().toISOString(),
     };
 
+    const redirectTo =
+      finalEmployee.role === "sales_ops" ? "/ops/sales/pipeline" : "/ops";
+
     const response = NextResponse.json({
       success: true,
       session,
-      redirectTo: "/ops",
+      redirectTo,
     });
 
     response.cookies.set({
