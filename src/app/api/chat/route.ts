@@ -13,6 +13,15 @@ import {
   isRefundBankCreditQuestion,
   type PolicyChatGrounding,
 } from "@/lib/policyChatGrounding";
+import { stripOrchestratorTraceForDisplay } from "@/lib/stripOrchestratorTrace";
+import { formatOrchestratorError } from "@/lib/orchestratorErrors";
+
+/** Allow long orchestrator runs (n8n often 60–120s+). Hosting may still cap lower. */
+export const maxDuration = 300;
+export const runtime = "nodejs";
+
+/** Cloudflare on n8n.cloud cuts at ~120s; keep client wait slightly above that. */
+const ORCHESTRATOR_TIMEOUT_MS = 240_000;
 
 function isOpenCustomerStatus(status: string): boolean {
   return status !== "RESOLVED";
@@ -108,7 +117,7 @@ export async function POST(request: NextRequest) {
 
     try {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 180000);
+      const timeoutId = setTimeout(() => controller.abort(), ORCHESTRATOR_TIMEOUT_MS);
 
       const effectiveOrderId = order_id || grounding?.relatedOrderId || undefined;
 
@@ -163,16 +172,20 @@ export async function POST(request: NextRequest) {
           });
         }
         const errText = await upstreamResponse.text();
+        const friendly = formatOrchestratorError(errText, upstreamResponse.status);
         return NextResponse.json(
           {
-            error: `Upstream Autonomous Orchestrator returned status ${upstreamResponse.status}: ${errText || "No response details"}`,
+            error: friendly.message,
+            retryable: friendly.retryable,
+            code: friendly.code || `HTTP_${upstreamResponse.status}`,
+            detail: errText.slice(0, 500),
           },
-          { status: 502 }
+          { status: upstreamResponse.status === 524 ? 504 : 502 }
         );
       }
 
       const upstreamData = await upstreamResponse.json();
-      let replyText =
+      const rawReplyText =
         upstreamData.reply ||
         upstreamData.output ||
         upstreamData.message ||
@@ -180,9 +193,16 @@ export async function POST(request: NextRequest) {
         (typeof upstreamData === "string" ? upstreamData : null) ||
         "Orchestrator acknowledged your request without text output.";
 
-      if (grounding && typeof replyText === "string") {
+      let replyText =
+        typeof rawReplyText === "string" ? rawReplyText : String(rawReplyText);
+
+      if (grounding) {
         replyText = ensurePolicyChangeInReply(replyText, grounding);
       }
+
+      // Preserve full upstream text for optional structured trace; return message body only.
+      const rawForTrace = replyText;
+      replyText = stripOrchestratorTraceForDisplay(replyText);
 
       const hilSignal = detectHilFromToolCalls(upstreamData);
 
@@ -233,7 +253,7 @@ export async function POST(request: NextRequest) {
           latencyMs: (trace as { latencyMs?: number })?.latencyMs ?? 0,
           timestamp: new Date().toISOString(),
         };
-      } else if (!trace && typeof replyText === "string" && /Intent\s*->/i.test(replyText)) {
+      } else if (!trace && /Intent\s*(?:→|->)/i.test(rawForTrace)) {
         trace = {
           intent: "ORCHESTRATOR_MULTI_AGENT",
           agentsInvolved: ["Orchestrator"],
@@ -242,7 +262,7 @@ export async function POST(request: NextRequest) {
           confidence: 0.9,
           latencyMs: 0,
           timestamp: new Date().toISOString(),
-          raw: replyText.slice(0, 2000),
+          raw: rawForTrace.slice(0, 2000),
         };
       } else if (trace && hilSignal.detected) {
         trace = { ...trace, decision: trace.decision || "ESCALATE_HUMAN" };
@@ -289,12 +309,14 @@ export async function POST(request: NextRequest) {
           hil_note: "Orchestrator unreachable; replied from active Cosmos policy.",
         });
       }
-      const errorMessage = err instanceof Error ? err.message : "Network error";
+      const friendly = formatOrchestratorError(err);
       return NextResponse.json(
         {
-          error: `Failed to communicate with N8N_CS_ORCHESTRATOR_URL: ${errorMessage}`,
+          error: friendly.message,
+          retryable: friendly.retryable,
+          code: friendly.code || "UPSTREAM_ERROR",
         },
-        { status: 502 }
+        { status: 504 }
       );
     }
   } catch (error: unknown) {

@@ -11,11 +11,16 @@ import {
   Tag,
   Radio,
   Receipt,
-  Sparkles,
   ExternalLink,
+  Mic,
+  MicOff,
+  Volume2,
+  Loader2,
 } from "lucide-react";
 import { ChatMessage, Customer } from "@/lib/types";
-import { AgentTraceView } from "./AgentTraceView";
+import { stripOrchestratorTraceForDisplay } from "@/lib/stripOrchestratorTrace";
+import { formatOrchestratorError } from "@/lib/orchestratorErrors";
+import { useSarvamVoice } from "@/hooks/useSarvamVoice";
 
 interface ChatInterfaceProps {
   customer: Customer;
@@ -52,12 +57,31 @@ export function ChatInterface({
   );
   const [selectedTid, setSelectedTid] = useState<string | undefined>(initialTid);
   const [isLoading, setIsLoading] = useState(false);
+  const [waitSeconds, setWaitSeconds] = useState(0);
   const [lastError, setLastError] = useState<string | null>(null);
+  const [lastErrorRetryable, setLastErrorRetryable] = useState(false);
   const [openCases, setOpenCases] = useState<
     Array<{ escalationId: string; issue: string; status: string }>
   >([]);
   const autoSentRef = useRef(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const lastSentRef = useRef<string>("");
+  const handleSendRef = useRef<
+    (customText?: string, opts?: { retry?: boolean }) => Promise<void>
+  >(async () => {});
+
+  const {
+    isRecording,
+    isTranscribing,
+    speakingId,
+    voiceError,
+    playTts,
+    toggleRecording,
+    voiceBusy,
+  } = useSarvamVoice(async (text) => {
+    setInputMessage(text);
+    await handleSendRef.current(text);
+  }, isLoading);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -67,21 +91,37 @@ export function ChatInterface({
     scrollToBottom();
   }, [messages, isLoading]);
 
-  const handleSendMessage = async (customText?: string) => {
-    const textToSend = (customText || inputMessage).trim();
+  useEffect(() => {
+    if (!isLoading) {
+      setWaitSeconds(0);
+      return;
+    }
+    setWaitSeconds(0);
+    const id = setInterval(() => setWaitSeconds((s) => s + 1), 1000);
+    return () => clearInterval(id);
+  }, [isLoading]);
+
+  const handleSendMessage = async (
+    customText?: string,
+    opts?: { retry?: boolean }
+  ) => {
+    const textToSend = (customText || inputMessage || lastSentRef.current).trim();
     if (!textToSend || isLoading) return;
 
     setLastError(null);
+    setLastErrorRetryable(false);
+    lastSentRef.current = textToSend;
 
-    const userMessage: ChatMessage = {
-      id: `user-${Date.now()}`,
-      sender: "customer",
-      text: textToSend,
-      timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-    };
-
-    setMessages((prev) => [...prev, userMessage]);
-    setInputMessage("");
+    if (!opts?.retry) {
+      const userMessage: ChatMessage = {
+        id: `user-${Date.now()}`,
+        sender: "customer",
+        text: textToSend,
+        timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+      };
+      setMessages((prev) => [...prev, userMessage]);
+      setInputMessage("");
+    }
     setIsLoading(true);
 
     try {
@@ -101,19 +141,20 @@ export function ChatInterface({
       const data = await response.json();
 
       if (!response.ok || data.error) {
-        setLastError(
-          data.error ||
-            `Autonomous Orchestrator service error (${response.status}). Could not reach n8n webhook.`
-        );
+        const friendly = formatOrchestratorError(data.error || data, response.status);
+        setLastError(friendly.message);
+        setLastErrorRetryable(Boolean(data.retryable ?? friendly.retryable));
         return;
       }
 
+      const rawReply =
+        typeof data.reply === "string" ? data.reply : String(data.reply ?? "");
+      const cleanReply = stripOrchestratorTraceForDisplay(rawReply);
       const assistantMessage: ChatMessage = {
         id: `asst-${Date.now()}`,
         sender: "assistant",
-        text: data.reply,
+        text: cleanReply,
         timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-        trace: data.trace,
       };
 
       setMessages((prev) => [...prev, assistantMessage]);
@@ -128,65 +169,22 @@ export function ChatInterface({
           )
         );
       }
-      if (data.hil?.detected_from_tools) {
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: `hil-${Date.now()}`,
-            sender: "system",
-            text: `Case opened for Ops (from tools → Cosmos). Status is view-only.${
-              data.hil.packages?.[0]
-                ? ` ${data.hil.packages[0].escalationId}: ${data.hil.packages[0].status}`
-                : ""
-            }`,
-            timestamp: new Date().toLocaleTimeString([], {
-              hour: "2-digit",
-              minute: "2-digit",
-            }),
-          },
-        ]);
-      }
-      if (Array.isArray(data.suggestedActions) && data.suggestedActions.length > 0) {
-        // Attach lightweight action chips as a system note only for view/status
-        const viewOnly = data.suggestedActions.filter(
-          (a: { action?: string }) =>
-            a.action === "VIEW_ESCALATION" ||
-            a.action === "VIEW_ORDER" ||
-            a.action === "VIEW_DEVICE" ||
-            a.action === "VIEW_ORDERS"
-        );
-        if (viewOnly.length) {
-          setMessages((prev) => [
-            ...prev,
-            {
-              id: `sys-${Date.now()}`,
-              sender: "system",
-              text: viewOnly.map((a: { label: string }) => a.label).join(" · "),
-              timestamp: new Date().toLocaleTimeString([], {
-                hour: "2-digit",
-                minute: "2-digit",
-              }),
-              contextPills: viewOnly
-                .filter((a: { action?: string; targetId?: string }) => a.targetId)
-                .map((a: { action: string; targetId: string }) => ({
-                  type:
-                    a.action === "VIEW_ESCALATION"
-                      ? ("escalation" as const)
-                      : a.action === "VIEW_DEVICE"
-                        ? ("device" as const)
-                        : ("order" as const),
-                  id: a.targetId,
-                })),
-            },
-          ]);
-        }
-      }
-    } catch {
-      setLastError("Network connection lost. Failed to send message to /api/chat.");
+    } catch (err: unknown) {
+      const friendly = formatOrchestratorError(err);
+      setLastError(friendly.message);
+      setLastErrorRetryable(friendly.retryable);
     } finally {
       setIsLoading(false);
     }
   };
+  handleSendRef.current = handleSendMessage;
+
+  useEffect(() => {
+    if (!autoSendPrompt || !initialPrompt?.trim() || autoSentRef.current) return;
+    autoSentRef.current = true;
+    void handleSendMessage(initialPrompt);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- one-shot demo auto-send
+  }, [autoSendPrompt, initialPrompt]);
 
   const handleActionClick = (action: string, targetId?: string) => {
     if (action === "VIEW_ESCALATION" && targetId) {
@@ -375,10 +373,21 @@ export function ChatInterface({
                   }`}
                 >
                   <p className="whitespace-pre-wrap">{msg.text}</p>
-
-                  {/* Assistant Trace Collapsible */}
-                  {!isUser && msg.trace && (
-                    <AgentTraceView trace={msg.trace} />
+                  {!isUser && msg.sender === "assistant" && msg.id !== "msg-welcome" && (
+                    <button
+                      type="button"
+                      onClick={() => playTts(msg.id, msg.text)}
+                      disabled={speakingId === msg.id}
+                      className="mt-3 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-mono bg-surface border border-surface-border text-cyan-300 hover:border-cyan-400/60 disabled:opacity-50"
+                      title="Play with Sarvam voice"
+                    >
+                      {speakingId === msg.id ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <Volume2 className="w-3.5 h-3.5" />
+                      )}
+                      {speakingId === msg.id ? "Speaking…" : "Speak"}
+                    </button>
                   )}
                 </div>
               </div>
@@ -392,11 +401,19 @@ export function ChatInterface({
             <div className="h-8 w-8 rounded-lg bg-cyan-500/20 border border-cyan-500/40 flex items-center justify-center text-cyan-400 shrink-0">
               <Cpu className="w-4 h-4 animate-spin" />
             </div>
-            <div className="p-4 rounded-2xl rounded-tl-none bg-surface-secondary border border-surface-border">
+            <div className="p-4 rounded-2xl rounded-tl-none bg-surface-secondary border border-surface-border max-w-md">
               <div className="flex items-center gap-2 text-cyan-300 font-mono text-xs">
                 <span className="w-2 h-2 rounded-full bg-cyan-400 animate-ping" />
-                <span>Autonomous Orchestrator synthesizing intent & querying switch...</span>
+                <span>
+                  Orchestrator working… {waitSeconds}s
+                  {waitSeconds >= 60 ? " (often finishes near 90–120s)" : ""}
+                </span>
               </div>
+              {waitSeconds >= 90 && (
+                <p className="mt-2 text-[10px] font-mono text-slate-500 leading-relaxed">
+                  n8n.cloud may cut at 120s (Cloudflare 524). If that happens, use Retry.
+                </p>
+              )}
             </div>
           </div>
         )}
@@ -413,18 +430,18 @@ export function ChatInterface({
                 <p className="mt-1 text-rose-200/90 leading-relaxed font-mono">
                   {lastError}
                 </p>
-                <p className="text-[10px] text-rose-400/80 mt-1">
-                  If using a custom n8n workflow, verify that <code className="text-white">N8N_CS_ORCHESTRATOR_URL</code> is reachable.
-                </p>
               </div>
             </div>
-            <button
-              onClick={() => handleSendMessage()}
-              className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 text-rose-200 border border-rose-500/50 font-mono text-xs shrink-0 transition-colors"
-            >
-              <RotateCcw className="w-3.5 h-3.5" />
-              <span>Retry</span>
-            </button>
+            {lastErrorRetryable && (
+              <button
+                type="button"
+                onClick={() => void handleSendMessage(undefined, { retry: true })}
+                className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 text-rose-200 border border-rose-500/50 font-mono text-xs shrink-0 transition-colors"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                <span>Retry</span>
+              </button>
+            )}
           </div>
         )}
 
@@ -437,25 +454,54 @@ export function ChatInterface({
           e.preventDefault();
           handleSendMessage();
         }}
-        className="p-4 bg-surface-secondary/80 border-t border-surface-border flex items-center gap-3"
+        className="p-4 bg-surface-secondary/80 border-t border-surface-border space-y-2"
       >
-        <input
-          type="text"
-          value={inputMessage}
-          onChange={(e) => setInputMessage(e.target.value)}
-          placeholder="Ask Autonomous AI OS about SoundBox errors, disputed orders, or settlements..."
-          disabled={isLoading}
-          className="flex-1 px-4 py-3 rounded-xl bg-surface border border-surface-border text-sm text-white placeholder-slate-500 focus:outline-none focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400 transition-colors disabled:opacity-50"
-        />
-
-        <button
-          type="submit"
-          disabled={isLoading || !inputMessage.trim()}
-          className="px-5 py-3 rounded-xl bg-cyan-500 hover:bg-cyan-400 disabled:bg-slate-800 disabled:text-slate-600 text-slate-950 font-bold text-sm flex items-center gap-2 transition-all shadow-lg shadow-cyan-500/20"
-        >
-          <span>Send</span>
-          <Send className="w-4 h-4" />
-        </button>
+        {(voiceError || isTranscribing || isRecording) && (
+          <p className="text-[11px] font-mono text-slate-400 px-1">
+            {isRecording
+              ? "Listening… tap mic again to stop & send"
+              : isTranscribing
+                ? "Transcribing with Sarvam…"
+                : voiceError}
+          </p>
+        )}
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => void toggleRecording()}
+            disabled={isLoading || isTranscribing}
+            className={`px-3 py-3 rounded-xl border shrink-0 transition-colors disabled:opacity-50 ${
+              isRecording
+                ? "bg-rose-500/20 border-rose-500/50 text-rose-300 animate-pulse"
+                : "bg-surface border-surface-border text-slate-300 hover:border-cyan-400/50 hover:text-cyan-300"
+            }`}
+            title={isRecording ? "Stop recording" : "Voice input (Sarvam STT)"}
+          >
+            {isTranscribing ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : isRecording ? (
+              <MicOff className="w-4 h-4" />
+            ) : (
+              <Mic className="w-4 h-4" />
+            )}
+          </button>
+          <input
+            type="text"
+            value={inputMessage}
+            onChange={(e) => setInputMessage(e.target.value)}
+            placeholder="Type or tap mic to speak…"
+            disabled={isLoading || voiceBusy}
+            className="flex-1 px-4 py-3 rounded-xl bg-surface border border-surface-border text-sm text-white placeholder-slate-500 focus:outline-none focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400 transition-colors disabled:opacity-50"
+          />
+          <button
+            type="submit"
+            disabled={isLoading || voiceBusy || !inputMessage.trim()}
+            className="px-5 py-3 rounded-xl bg-cyan-500 hover:bg-cyan-400 disabled:bg-slate-800 disabled:text-slate-600 text-slate-950 font-bold text-sm flex items-center gap-2 transition-all shadow-lg shadow-cyan-500/20"
+          >
+            <span>Send</span>
+            <Send className="w-4 h-4" />
+          </button>
+        </div>
       </form>
     </div>
   );
