@@ -2,29 +2,24 @@
 
 import React, { useState, useEffect } from "react";
 import Link from "next/link";
-import { useParams, useRouter } from "next/navigation";
+import { useParams } from "next/navigation";
 import {
   ArrowLeft,
   ShieldAlert,
   AlertTriangle,
   CheckCircle2,
   XCircle,
-  Edit3,
-  UserCheck,
-  RotateCcw,
   Cpu,
   FileCode2,
   ExternalLink,
   Lock,
   Clock,
-  Send,
 } from "lucide-react";
 import { EscalationPackage, HumanActionType } from "@/lib/opsTypes";
 import { EvidenceJsonViewer } from "@/components/ops/EvidenceJsonViewer";
 
 export default function OpsEscalationDetailPage() {
   const params = useParams();
-  const router = useRouter();
   const id = params.id as string;
 
   const [escalation, setEscalation] = useState<EscalationPackage | null>(null);
@@ -34,8 +29,6 @@ export default function OpsEscalationDetailPage() {
     type: "success" | "error";
     text: string;
   } | null>(null);
-  const [modifyNotes, setModifyNotes] = useState("");
-  const [showModifyInput, setShowModifyInput] = useState(false);
 
   useEffect(() => {
     async function fetchEscalation() {
@@ -58,11 +51,6 @@ export default function OpsEscalationDetailPage() {
   }, [id]);
 
   const handleExecuteAction = async (action: HumanActionType) => {
-    if (action === "modify" && !showModifyInput) {
-      setShowModifyInput(true);
-      return;
-    }
-
     setActionLoading(action);
     setFeedbackMessage(null);
 
@@ -73,7 +61,7 @@ export default function OpsEscalationDetailPage() {
         body: JSON.stringify({
           action,
           decidedBy: "Support Ops Agent",
-          notes: modifyNotes || `Action ${action.toUpperCase()} authorized via Ops Console.`,
+          notes: `Action ${action.toUpperCase()} authorized via Ops Console.`,
           refundAmount: action === "approve" ? escalation?.evidence.amount : undefined,
         }),
       });
@@ -83,10 +71,10 @@ export default function OpsEscalationDetailPage() {
         setEscalation(data.escalation);
         setFeedbackMessage({
           type: "success",
-          text: `Decision '${action.toUpperCase()}' registered. State updated to '${data.escalation.status.toUpperCase()}'.`,
+          text: `Decision '${action.toUpperCase()}' saved to Cosmos (DB status=${data.escalation.status}).${
+            data.auditWritten ? " Audit event written." : ""
+          }`,
         });
-        setShowModifyInput(false);
-        setModifyNotes("");
       } else {
         setFeedbackMessage({
           type: "error",
@@ -107,7 +95,7 @@ export default function OpsEscalationDetailPage() {
     return (
       <div className="p-12 text-center text-xs font-mono text-slate-400 space-y-3">
         <div className="w-6 h-6 border-2 border-amber-400 border-t-transparent rounded-full animate-spin mx-auto" />
-        <p>Loading MCP Escalation Package from Cosmos Store...</p>
+        <p>Loading escalation package from Cosmos…</p>
       </div>
     );
   }
@@ -221,7 +209,7 @@ export default function OpsEscalationDetailPage() {
               href={`/ops/customers/${escalation.customerId}`}
               className="text-cyan-300 hover:text-white font-bold flex items-center gap-1 mt-0.5"
             >
-              <span>{escalation.customerId} (Rajesh Supermarket)</span>
+              <span>{escalation.customerId}</span>
               <ExternalLink className="w-3 h-3" />
             </Link>
           </div>
@@ -311,7 +299,7 @@ export default function OpsEscalationDetailPage() {
           {/* Evidence JSON Explorer */}
           <EvidenceJsonViewer
             data={escalation.evidence}
-            title="Cosmos DB Raw Evidence Payload"
+            title="Evidence payload (from Cosmos document)"
           />
         </div>
 
@@ -331,24 +319,10 @@ export default function OpsEscalationDetailPage() {
             </div>
 
             <p className="text-xs text-slate-400 font-sans leading-relaxed">
-              Select an action to execute. Financial refunds and dispute closures mutate mock state and call <code className="text-cyan-400 font-mono">PATCH /api/escalations/{escalation.escalationId}</code>.
+              Select an action to execute. Decisions are persisted to Cosmos via{" "}
+              <code className="text-cyan-400 font-mono">PATCH /api/escalations/{escalation.escalationId}</code>.
+              MCP never auto-refunds.
             </p>
-
-            {/* Custom Modify Notes Input if toggled */}
-            {showModifyInput && (
-              <div className="p-3.5 rounded-xl bg-surface-secondary border border-surface-border space-y-2 animate-page-enter">
-                <label className="block text-[11px] font-mono uppercase text-slate-300">
-                  Custom Modification Notes / Directive:
-                </label>
-                <textarea
-                  value={modifyNotes}
-                  onChange={(e) => setModifyNotes(e.target.value)}
-                  placeholder="e.g. Hold 50% until secondary bank recon confirms remitter clearing..."
-                  className="w-full p-2.5 rounded-lg bg-surface border border-surface-border text-xs text-white placeholder-slate-500 font-mono focus:outline-none focus:border-amber-400"
-                  rows={3}
-                />
-              </div>
-            )}
 
             {/* Action Buttons Grid */}
             <div className="space-y-2.5 font-mono text-xs">
@@ -363,7 +337,11 @@ export default function OpsEscalationDetailPage() {
                   <CheckCircle2 className="w-4 h-4" />
                   <span>Approve Recommendation</span>
                 </div>
-                <span className="text-[10px] opacity-80 uppercase">Refund ₹1,450</span>
+                <span className="text-[10px] opacity-80 uppercase">
+                  {escalation.evidence.amount > 0
+                    ? `Refund ₹${escalation.evidence.amount.toLocaleString("en-IN")}`
+                    : "From package"}
+                </span>
               </button>
 
               {/* Reject */}
@@ -378,62 +356,6 @@ export default function OpsEscalationDetailPage() {
                   <span>Reject Recommendation</span>
                 </div>
                 <span className="text-[10px] text-rose-400">Deny Claim</span>
-              </button>
-
-              {/* Modify */}
-              <button
-                type="button"
-                onClick={() => handleExecuteAction("modify")}
-                disabled={actionLoading !== null || isResolved}
-                className="w-full py-2.5 px-4 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/40 flex items-center justify-between disabled:opacity-40 transition-colors"
-              >
-                <div className="flex items-center gap-2">
-                  <Edit3 className="w-4 h-4" />
-                  <span>{showModifyInput ? "Submit Modification" : "Modify Decision"}</span>
-                </div>
-                <span className="text-[10px] text-amber-400">Custom Terms</span>
-              </button>
-
-              {/* Take Over Case */}
-              <button
-                type="button"
-                onClick={() => handleExecuteAction("take_over")}
-                disabled={actionLoading !== null || isResolved}
-                className="w-full py-2.5 px-4 rounded-xl bg-surface-secondary hover:bg-surface-elevated text-slate-200 border border-surface-border flex items-center justify-between disabled:opacity-40 transition-colors"
-              >
-                <div className="flex items-center gap-2">
-                  <UserCheck className="w-4 h-4" />
-                  <span>Take Over Case</span>
-                </div>
-                <span className="text-[10px] text-slate-400">Manual Recon</span>
-              </button>
-
-              {/* Return to Agent */}
-              <button
-                type="button"
-                onClick={() => handleExecuteAction("return_to_agent")}
-                disabled={actionLoading !== null || isResolved}
-                className="w-full py-2.5 px-4 rounded-xl bg-purple-500/15 hover:bg-purple-500/25 text-purple-300 border border-purple-500/40 flex items-center justify-between disabled:opacity-40 transition-colors"
-              >
-                <div className="flex items-center gap-2">
-                  <RotateCcw className="w-4 h-4" />
-                  <span>Return to Agent</span>
-                </div>
-                <span className="text-[10px] text-purple-400">Re-Query Switch</span>
-              </button>
-
-              {/* Direct Resolve */}
-              <button
-                type="button"
-                onClick={() => handleExecuteAction("resolve")}
-                disabled={actionLoading !== null || isResolved}
-                className="w-full py-2.5 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 flex items-center justify-between disabled:opacity-40 transition-colors"
-              >
-                <div className="flex items-center gap-2">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                  <span>Resolve & Close Package</span>
-                </div>
-                <span className="text-[10px] text-slate-400">Finalize</span>
               </button>
             </div>
 
