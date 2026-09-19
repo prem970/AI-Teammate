@@ -1,58 +1,49 @@
 import { NextRequest, NextResponse } from "next/server";
 
 export async function GET() {
-  const mcpUrl = process.env.MCP_BASE_URL || "https://railway-mcp.internal.corp/mcp";
+  const mcpUrl = (process.env.MCP_BASE_URL || "").replace(/\/$/, "");
   const startTime = Date.now();
 
-  try {
-    // If a live upstream URL is available and reachable, perform a lightweight probe
-    if (process.env.MCP_BASE_URL && !process.env.MCP_BASE_URL.includes("internal.corp")) {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 3000);
-      try {
-        const upstream = await fetch(`${mcpUrl}/health`, {
-          signal: controller.signal,
-        });
-        clearTimeout(timeoutId);
-        if (upstream.ok) {
-          const data = await upstream.json();
-          return NextResponse.json({
-            success: true,
-            status: "HEALTHY",
-            url: mcpUrl,
-            latencyMs: Date.now() - startTime,
-            protocolVersion: "2024-11-05",
-            details: data,
-          });
-        }
-      } catch {
-        // Fall back to healthy simulated probe
-      }
-    }
+  if (!mcpUrl) {
+    return NextResponse.json(
+      { success: false, status: "MISSING_CONFIG", error: "MCP_BASE_URL is not set" },
+      { status: 500 }
+    );
+  }
 
-    // Default High-Fidelity Health Probe Response
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 8000);
+    // Streamable MCP often returns 400/406 on bare GET — reachable is enough
+    const upstream = await fetch(mcpUrl, {
+      method: "GET",
+      headers: { Accept: "application/json, text/event-stream" },
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+
     return NextResponse.json({
       success: true,
-      status: "HEALTHY",
+      status: upstream.status < 500 ? "REACHABLE" : "UNHEALTHY",
       url: mcpUrl,
-      latencyMs: 42,
+      httpStatus: upstream.status,
+      latencyMs: Date.now() - startTime,
       protocolVersion: "2024-11-05",
-      mcpGateway: "Railway Production Endpoint",
-      registeredToolsCount: 18,
-      activeSecurityRules: {
-        leastPrivilegeEnforced: true,
-        denyOnUnknownAgent: true,
-        humanEscalationMandatory: true,
-      },
-      metricsSummary: {
-        allow24h: 44912,
-        deny24h: 38,
-      },
+      note: "MCP streamable HTTP endpoint probed; tool calls require session initialize.",
       timestamp: new Date().toISOString(),
     });
   } catch (err: unknown) {
     const errorMsg = err instanceof Error ? err.message : "Error probing MCP";
-    return NextResponse.json({ success: false, error: errorMsg }, { status: 500 });
+    return NextResponse.json(
+      {
+        success: false,
+        status: "UNREACHABLE",
+        url: mcpUrl,
+        error: errorMsg,
+        latencyMs: Date.now() - startTime,
+      },
+      { status: 502 }
+    );
   }
 }
 
