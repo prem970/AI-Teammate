@@ -1,8 +1,7 @@
 "use client";
 
-import React, { useState, Suspense } from "react";
+import React, { useEffect, useState } from "react";
 import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
 import {
   ArrowLeft,
   Upload,
@@ -14,34 +13,39 @@ import {
   Info,
 } from "lucide-react";
 
-function PolicyUploadForm() {
-  const searchParams = useSearchParams();
-
-  // Preset values if launched from a policy card
-  const defaultPolicyId = searchParams.get("policy_id") || "PAYMENT-DUPLICATE-V2";
-  const defaultProduct = searchParams.get("product_id") || "SoundBox";
-
-  const [policyId, setPolicyId] = useState(defaultPolicyId);
-  const [policyVersion, setPolicyVersion] = useState("v2.4.2-REV");
-  const [productId, setProductId] = useState(defaultProduct);
+export default function PolicyUploadPage() {
+  const [policyId, setPolicyId] = useState("POL-PAY-REFUND-CREDIT");
+  const [policyVersion, setPolicyVersion] = useState("v1.1");
+  const [productId, setProductId] = useState("SoundBox");
   const [category, setCategory] = useState("Dispute & Refunds");
   const [source, setSource] = useState("ops_compliance_team");
   const [docType, setDocType] = useState<"markdown" | "text">("markdown");
-
   const [content, setContent] = useState(
-    `# Policy Specification: ${defaultPolicyId}\n` +
-      `Version: 2.4.2\n` +
-      `Product: ${defaultProduct}\n` +
-      `Effective: 2026-10-01\n\n` +
-      `## 1. Scope & Precedence\n` +
-      `This policy governs automated duplicate transaction dispute resolution for all merchant SoundBox terminals.\n` +
-      `Current active policy strictly supersedes historical case precedents.\n\n` +
-      `## 2. Decision Tree for Switch Code U69\n` +
-      `- If NPCI returns U69 (transient timeout reversal), remitter dual debits must be confirmed via switch ledger.\n` +
-      `- TXN-001 is recognized as merchant revenue and protected in escrow.\n` +
-      `- TXN-002 is flagged as duplicate and queued for human ops approval in MCP package.\n` +
-      `- MCP does not auto-refund without explicit human operator signature.\n`
+    `# POLICY UPDATE — UPI / SoundBox Refund Credit Timeline (v1.1)\n` +
+      `Document ID: POL-PAY-REFUND-CREDIT\n` +
+      `Version: v1.1 (was v1.0)\n` +
+      `Effective: 2026-09-19\n\n` +
+      `## Why this changed\n` +
+      `Company shortened the published UPI refund bank credit SLA. Use v1.1 only. Older 7-day answers are examples only.\n\n` +
+      `## Credit timeline (UPDATED)\n` +
+      `| Channel | Previous (v1.0) | Current (v1.1) — REQUIRED |\n` +
+      `|---|---|---|\n` +
+      `| UPI / SoundBox QR refund | Up to 7 business days | Up to **3 business days** |\n` +
+      `| Card refund | 5–10 business days | Unchanged (issuer dependent) |\n\n` +
+      `If Paytm shows refund SUCCESS and bank credit is missing after 3 business days (UPI), escalate to L2 Payments with UTR.\n\n` +
+      `## Agent behavior\n` +
+      `1. Confirm refund status from tools.\n` +
+      `2. Quote POL-PAY-REFUND-CREDIT v1.1 — up to 3 business days for UPI bank credit.\n` +
+      `3. If context still says 7 days, prefer v1.1.\n`
   );
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const pid = params.get("policy_id");
+    const prod = params.get("product_id");
+    if (pid) setPolicyId(pid);
+    if (prod) setProductId(prod);
+  }, []);
 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [result, setResult] = useState<{
@@ -94,7 +98,42 @@ function PolicyUploadForm() {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 max-w-4xl mx-auto">
+      <div className="flex items-center justify-between">
+        <Link
+          href="/ops/policies"
+          className="inline-flex items-center gap-2 text-xs font-mono text-slate-400 hover:text-purple-300 transition-colors"
+        >
+          <ArrowLeft className="w-4 h-4" />
+          <span>Back to Policies Directory</span>
+        </Link>
+        <span className="text-xs font-mono text-purple-400 bg-purple-500/10 px-2.5 py-1 rounded border border-purple-500/30">
+          Role: Policy Owner
+        </span>
+      </div>
+
+      <div>
+        <h1 className="font-display text-2xl sm:text-3xl font-bold text-white tracking-tight">
+          Ingest Policy into RAG Vector Store
+        </h1>
+        <p className="text-xs sm:text-sm text-slate-400 font-mono mt-1">
+          Upload or update regulatory Markdown documents forwarded to n8n RAG pipeline.
+        </p>
+      </div>
+
+      <div className="p-4 rounded-xl bg-purple-950/30 border border-purple-500/40 flex items-start gap-3 shadow-md text-xs">
+        <Info className="w-5 h-5 text-purple-400 shrink-0 mt-0.5" />
+        <div className="space-y-1 font-mono text-slate-300">
+          <p className="font-bold text-purple-300 uppercase">
+            Helper Notice: Only re-ingest the changed policy doc; promote Cosmos active version separately.
+          </p>
+          <p className="text-slate-400 font-sans leading-relaxed text-[11px]">
+            This form POSTs to N8N_RAG_INGEST_URL. If that env var is missing, the API returns 503 — it will not fake embed success.
+          </p>
+        </div>
+      </div>
+
+      <div className="space-y-6">
       {/* Ingest Result Banner */}
       {result && (
         <div
@@ -252,59 +291,6 @@ function PolicyUploadForm() {
         </div>
       </form>
     </div>
-  );
-}
-
-export default function OpsPolicyUploadPage() {
-  return (
-    <div className="space-y-6 max-w-4xl mx-auto">
-      {/* Back Button */}
-      <div className="flex items-center justify-between">
-        <Link
-          href="/ops/policies"
-          className="inline-flex items-center gap-2 text-xs font-mono text-slate-400 hover:text-purple-300 transition-colors"
-        >
-          <ArrowLeft className="w-4 h-4" />
-          <span>Back to Policies Directory</span>
-        </Link>
-
-        <span className="text-xs font-mono text-purple-400 bg-purple-500/10 px-2.5 py-1 rounded border border-purple-500/30">
-          Role: Policy Owner
-        </span>
-      </div>
-
-      {/* Header */}
-      <div>
-        <h1 className="font-display text-2xl sm:text-3xl font-bold text-white tracking-tight">
-          Ingest Policy into RAG Vector Store
-        </h1>
-        <p className="text-xs sm:text-sm text-slate-400 font-mono mt-1">
-          Upload or update regulatory Markdown documents forwarded to n8n RAG pipeline.
-        </p>
-      </div>
-
-      {/* Mandatory Helper Notice */}
-      <div className="p-4 rounded-xl bg-purple-950/30 border border-purple-500/40 flex items-start gap-3 shadow-md text-xs">
-        <Info className="w-5 h-5 text-purple-400 shrink-0 mt-0.5" />
-        <div className="space-y-1 font-mono text-slate-300">
-          <p className="font-bold text-purple-300 uppercase">
-            Helper Notice: Only re-ingest the changed policy doc; update Cosmos active version separately.
-          </p>
-          <p className="text-slate-400 font-sans leading-relaxed text-[11px]">
-            The RAG ingest endpoint embeds markdown clauses into vector chunks for real-time similarity matching by autonomous supervisors. Setting active enforcement status in Cosmos DB happens via the version promotion cycle.
-          </p>
-        </div>
-      </div>
-
-      <Suspense
-        fallback={
-          <div className="p-10 rounded-2xl bg-surface border border-surface-border text-center text-xs font-mono text-slate-400 animate-pulse">
-            Loading Policy Ingest Form...
-          </div>
-        }
-      >
-        <PolicyUploadForm />
-      </Suspense>
     </div>
   );
 }

@@ -1,22 +1,11 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import Link from "next/link";
-import {
-  TrendingUp,
-  ArrowRight,
-  User,
-  Building,
-  Radio,
-  Clock,
-  ShieldCheck,
-  AlertCircle,
-  Cpu,
-  Layers,
-  Sparkles,
-} from "lucide-react";
-import { MOCK_LEADS } from "@/lib/opsMockData";
+import { TrendingUp, ArrowRight } from "lucide-react";
 import { SalesStage, Lead } from "@/lib/opsTypes";
+import { DataOriginBanner } from "@/components/ui/DataOriginBanner";
+import { ReachOutButton } from "@/components/ops/ReachOutButton";
 
 const STAGES: { stage: SalesStage; owner: string; color: string }[] = [
   { stage: "Outreach", owner: "Agent1-Outreach", color: "border-cyan-500/40 text-cyan-400" },
@@ -28,109 +17,107 @@ const STAGES: { stage: SalesStage; owner: string; color: string }[] = [
 ];
 
 export default function OpsSalesPipelinePage() {
-  const [leads] = useState<Lead[]>(MOCK_LEADS);
+  const [leads, setLeads] = useState<Lead[]>([]);
+  const [origin, setOrigin] = useState<"cosmos" | "unavailable">("unavailable");
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/data?resource=leads");
+        const data = await res.json();
+        if (cancelled) return;
+        if (!res.ok) {
+          setError(data.error || "Failed to load leads");
+          return;
+        }
+        setOrigin("cosmos");
+        setLeads(data.items || []);
+      } catch {
+        if (!cancelled) setError("Network error");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const outreachReady = leads.filter(
+    (l) => l.currentStage === "Outreach" || l.currentStage === "Follow-ups"
+  );
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-2">
-            <h1 className="font-display text-2xl sm:text-3xl font-bold text-white tracking-tight">
-              Multi-Agent Sales Pipeline Board
-            </h1>
-            <span className="px-2.5 py-0.5 rounded bg-emerald-500/15 border border-emerald-500/30 text-xs font-mono text-emerald-300">
-              Autonomous Sales OS
-            </span>
+      <DataOriginBanner origin={origin} />
+      <div>
+        <h1 className="font-display text-2xl sm:text-3xl font-bold text-white tracking-tight flex items-center gap-2">
+          <TrendingUp className="w-6 h-6 text-emerald-400" /> Sales pipeline
+        </h1>
+        <p className="text-xs sm:text-sm text-slate-400 font-mono mt-1">
+          Follow leads from Cosmos. Use Reach out to draft first-touch email via n8n Agent1 (not auto-sent).
+        </p>
+      </div>
+
+      {error && (
+        <div className="p-3 rounded-lg border border-rose-500/40 bg-rose-500/10 text-rose-200 text-xs">
+          {error}
+        </div>
+      )}
+
+      {outreachReady.length > 0 && (
+        <section className="p-4 rounded-2xl bg-surface border border-emerald-500/30 space-y-3">
+          <div>
+            <h2 className="font-display font-bold text-white text-lg">Reach out now</h2>
+            <p className="text-xs text-slate-400 font-mono mt-0.5">
+              Leads in Outreach / Follow-ups — click Reach out to invoke the sales-lead-intake webhook.
+            </p>
           </div>
-          <p className="text-xs sm:text-sm text-slate-400 font-mono mt-1">
-            Sequential merchant acquisition pipeline with strict stage ownership across autonomous agents.
-          </p>
-        </div>
-
-        <div className="flex items-center gap-2 text-xs font-mono text-slate-400">
-          <span>Active Pipeline: <strong className="text-white">₹3,95,000 MRR</strong></span>
-        </div>
-      </div>
-
-      {/* Strict Stage Governance Notice */}
-      <div className="p-4 rounded-xl bg-[#09111c] border border-emerald-500/30 flex items-start gap-3 shadow-md text-xs">
-        <div className="p-1.5 rounded-lg bg-emerald-500/20 text-emerald-400 shrink-0">
-          <ShieldCheck className="w-4 h-4" />
-        </div>
-        <div className="space-y-1 font-mono text-slate-300">
-          <p className="font-bold text-emerald-300 uppercase text-[11px]">
-            Stage Ownership Standard: Agent1 Outreach → Agent2 Quote/Negotiate → Agent3 Onboarding — No stage skipping.
-          </p>
-          <p className="text-slate-400 font-sans text-[11px] leading-relaxed">
-            Autonomous sales bots coordinate handoffs between stages. Regulatory KYC checks and commercial rate card approvals prevent skipping intermediate negotiation or quoting checkpoints.
-          </p>
-        </div>
-      </div>
-
-      {/* Kanban Board Columns Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-6 gap-4 overflow-x-auto pb-4">
-        {STAGES.map(({ stage, owner, color }) => {
-          const stageLeads = leads.filter((l) => l.currentStage === stage);
-
-          return (
-            <div
-              key={stage}
-              className="flex flex-col rounded-2xl bg-surface border border-surface-border min-w-[210px] overflow-hidden"
-            >
-              {/* Column Header */}
-              <div className="p-3.5 bg-surface-secondary/80 border-b border-surface-border">
-                <div className="flex items-center justify-between">
-                  <h2 className="font-display text-xs font-bold text-white uppercase tracking-wider">
-                    {stage}
-                  </h2>
-                  <span className="px-1.5 py-0.2 rounded-full bg-surface text-[10px] font-mono text-slate-400 border border-surface-border font-bold">
-                    {stageLeads.length}
-                  </span>
-                </div>
-                <p className="text-[10px] font-mono text-slate-500 mt-1 truncate">
-                  Owner: <span className="text-slate-300">{owner}</span>
-                </p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {outreachReady.map((lead) => (
+              <div
+                key={lead.id}
+                className="p-3 rounded-xl bg-surface-secondary border border-surface-border space-y-2"
+              >
+                <Link href={`/ops/sales/leads/${lead.id}`} className="block hover:opacity-90">
+                  <p className="text-[11px] font-mono text-slate-500">{lead.id}</p>
+                  <p className="text-sm text-white font-medium">{lead.businessName}</p>
+                  <p className="text-[11px] text-slate-400">
+                    {lead.contactName} · {lead.city} · {lead.currentStage}
+                  </p>
+                </Link>
+                <ReachOutButton leadId={lead.id} companyName={lead.businessName} compact />
               </div>
+            ))}
+          </div>
+        </section>
+      )}
 
-              {/* Cards List */}
-              <div className="p-2.5 flex-1 space-y-2.5 min-h-[300px]">
-                {stageLeads.length === 0 ? (
-                  <div className="h-full flex items-center justify-center p-6 text-center text-[11px] text-slate-600 font-mono">
-                    No leads in {stage}
-                  </div>
-                ) : (
-                  stageLeads.map((lead) => (
-                    <Link
-                      key={lead.id}
-                      href={`/ops/sales/leads/${lead.id}`}
-                      className="block p-3.5 rounded-xl bg-surface-secondary/70 border border-surface-border hover:border-amber-500/40 hover:bg-surface-elevated/90 transition-all group shadow-sm"
-                    >
-                      <div className="flex items-start justify-between gap-1 mb-1.5">
-                        <span className="font-mono text-[10px] font-bold text-slate-400">
-                          {lead.id}
-                        </span>
-                        <span className="font-mono text-[10px] font-bold text-emerald-400">
-                          ₹{lead.dealValue.toLocaleString("en-IN")}
-                        </span>
-                      </div>
-
-                      <h3 className="font-display text-xs font-bold text-slate-100 group-hover:text-amber-300 transition-colors line-clamp-1">
-                        {lead.businessName}
-                      </h3>
-
-                      <p className="text-[11px] text-slate-400 mt-1 font-sans truncate">
-                        Contact: {lead.contactName} ({lead.city})
-                      </p>
-
-                      <div className="mt-2.5 pt-2 border-t border-surface-border/60 flex items-center justify-between text-[10px] font-mono text-slate-500">
-                        <span className="truncate max-w-[120px]">
-                          {lead.hardwareCount} {lead.productPitch.split(" ")[1]}
-                        </span>
-                        <ArrowRight className="w-3 h-3 text-slate-400 group-hover:text-amber-400 group-hover:translate-x-0.5 transition-all" />
-                      </div>
-                    </Link>
-                  ))
+      <div className="grid grid-cols-1 md:grid-cols-3 xl:grid-cols-6 gap-3">
+        {STAGES.map(({ stage, owner, color }) => {
+          const column = leads.filter((l) => l.currentStage === stage);
+          return (
+            <div key={stage} className={`rounded-2xl border bg-surface p-3 ${color.split(" ")[0]}`}>
+              <p className={`text-[11px] font-mono font-bold mb-2 ${color.split(" ").slice(1).join(" ")}`}>
+                {stage}
+              </p>
+              <p className="text-[10px] font-mono text-slate-500 mb-3">{owner}</p>
+              <div className="space-y-2">
+                {column.map((lead) => (
+                  <Link
+                    key={lead.id}
+                    href={`/ops/sales/leads/${lead.id}`}
+                    className="block p-2.5 rounded-xl bg-surface-secondary border border-surface-border hover:border-cyan-500/40"
+                  >
+                    <p className="text-xs font-mono text-slate-500">{lead.id}</p>
+                    <p className="text-sm text-white font-medium">{lead.businessName}</p>
+                    <p className="text-[11px] text-slate-400 mt-1 inline-flex items-center gap-1">
+                      Follow lead <ArrowRight className="w-3 h-3" />
+                    </p>
+                  </Link>
+                ))}
+                {column.length === 0 && (
+                  <p className="text-[11px] text-slate-600 py-4 text-center">Empty</p>
                 )}
               </div>
             </div>

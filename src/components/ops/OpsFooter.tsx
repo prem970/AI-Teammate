@@ -25,7 +25,7 @@ export function OpsFooter() {
               <span>RAG Ingest: <strong>n8n Ready</strong></span>
             </div>
             <span className="text-slate-600">|</span>
-            <span className="text-amber-400">Cosmos DB Stub Active</span>
+            <span className="text-emerald-400">Cosmos ai_os when AZURE_* configured</span>
           </div>
         </div>
       </div>

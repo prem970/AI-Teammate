@@ -2,10 +2,11 @@ import React from "react";
 import Link from "next/link";
 import { getCurrentOpsSession } from "@/lib/opsAuth";
 import {
-  getEscalationsStore,
-  MOCK_POLICIES,
-  MOCK_LEADS,
-} from "@/lib/opsMockData";
+  listOpsEscalations,
+  listPolicies,
+  listLeads,
+  isCosmosLive,
+} from "@/lib/cosmos/repository";
 import {
   ShieldAlert,
   FileCode2,
@@ -19,23 +20,28 @@ import {
   Activity,
   Layers,
 } from "lucide-react";
+import { DataOriginBanner } from "@/components/ui/DataOriginBanner";
 
 export default async function OpsHomePage() {
   const session = await getCurrentOpsSession();
-  const escalations = getEscalationsStore();
+  const origin = isCosmosLive() ? "cosmos" : "unavailable";
+  const escalations = origin === "cosmos" ? await listOpsEscalations() : [];
+  const policies = origin === "cosmos" ? await listPolicies() : [];
+  const leads = origin === "cosmos" ? await listLeads() : [];
+
   const openEscalations = escalations.filter((e) => e.status === "open");
   const p1Escalations = escalations.filter(
     (e) => e.priority === "P1" && e.status !== "resolved"
   );
-  const activePolicies = MOCK_POLICIES.filter((p) => p.status === "active");
-  const activeLeads = MOCK_LEADS.filter((l) => l.currentStage !== "Closed-Won");
-  const leadsNeedingHandoff = MOCK_LEADS.filter(
+  const activePolicies = policies.filter((p) => p.status === "active");
+  const activeLeads = leads.filter((l) => l.currentStage !== "Closed-Won");
+  const leadsNeedingHandoff = leads.filter(
     (l) => l.currentStage === "Quoting" || l.currentStage === "Negotiation"
   );
 
   return (
     <div className="space-y-8">
-      {/* Ops Console Header */}
+      <DataOriginBanner origin={origin} />
       <section className="relative p-6 sm:p-8 rounded-2xl bg-gradient-to-br from-[#0c101a] via-[#101624] to-[#0a0d15] border border-surface-border overflow-hidden">
         <div className="absolute top-0 right-0 w-96 h-96 bg-amber-500/10 rounded-full blur-3xl pointer-events-none" />
 
@@ -43,208 +49,154 @@ export default async function OpsHomePage() {
           <div className="space-y-2">
             <div className="flex flex-wrap items-center gap-2.5">
               <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-500/15 border border-amber-500/40 text-amber-300 text-xs font-mono font-bold">
-                <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping" />
-                STAFF CONSOLE ONLINE
+                OPS CONSOLE
               </span>
               <span className="text-xs font-mono text-slate-400 bg-surface-secondary px-2.5 py-1 rounded border border-surface-border">
                 Role: <strong className="text-white uppercase">{session?.role}</strong>
               </span>
             </div>
-
-            <h1 className="font-display text-3xl sm:text-4xl font-bold text-white tracking-tight">
-              Operational Command, <span className="text-amber-400">{session?.name}</span>
+            <h1 className="font-display text-3xl font-bold text-white tracking-tight">
+              Command home
             </h1>
-            <p className="text-slate-300 text-sm max-w-2xl font-sans">
-              Human-in-the-Loop decision gateway for Paytm Autonomous AI OS. Audit disputed transaction evidence, authorize MCP refund exceptions, and monitor multi-agent sales progression.
+            <p className="text-sm text-slate-400 max-w-2xl">
+              Escalations, policies, and sales leads load from Cosmos. Staff login remains a demo
+              cookie (not an IdP). Chat/ingest use n8n webhooks when configured.
             </p>
-          </div>
-
-          <div className="flex flex-col sm:flex-row items-stretch md:items-center gap-3 shrink-0">
-            <Link
-              href="/ops/escalations"
-              className="inline-flex items-center justify-center gap-2 px-5 py-3 rounded-xl bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-400 hover:to-orange-500 text-slate-950 font-display font-bold text-sm shadow-lg shadow-amber-500/20 transition-all group"
-            >
-              <ShieldAlert className="w-4 h-4 text-slate-950 group-hover:scale-110 transition-transform" />
-              <span>Open Escalation Queue</span>
-              <ArrowRight className="w-4 h-4 text-slate-950 group-hover:translate-x-1 transition-transform" />
-            </Link>
           </div>
         </div>
       </section>
 
-      {/* Critical Priority P1 Banner if exists */}
-      {p1Escalations.length > 0 && (
-        <section className="p-4 sm:p-5 rounded-xl bg-rose-500/10 border border-rose-500/30 flex flex-col sm:flex-row sm:items-center justify-between gap-4 animate-page-enter">
-          <div className="flex items-start gap-3">
-            <div className="p-2 rounded-lg bg-rose-500/20 text-rose-400 shrink-0">
-              <AlertTriangle className="w-5 h-5" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="px-2 py-0.5 rounded bg-rose-500/30 text-rose-200 font-mono text-xs font-bold border border-rose-500/50">
-                  {p1Escalations[0].priority} CRITICAL
-                </span>
-                <h2 className="text-sm font-bold text-rose-100 font-mono">
-                  {p1Escalations[0].escalationId} — {p1Escalations[0].orderId}
-                </h2>
-              </div>
-              <p className="text-xs text-rose-200/90 mt-1 max-w-3xl font-sans">
-                {p1Escalations[0].issue}
-              </p>
-            </div>
-          </div>
-          <Link
-            href={`/ops/escalations/${p1Escalations[0].escalationId}`}
-            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 text-rose-200 text-xs font-mono font-medium shrink-0 border border-rose-500/50 transition-colors"
-          >
-            <span>Review MCP Package</span>
-            <ArrowRight className="w-3.5 h-3.5" />
-          </Link>
-        </section>
-      )}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <StatCard
+          icon={ShieldAlert}
+          label="Open escalations"
+          value={String(openEscalations.length)}
+          href="/ops/escalations"
+          accent="rose"
+        />
+        <StatCard
+          icon={AlertTriangle}
+          label="P1 open"
+          value={String(p1Escalations.length)}
+          href="/ops/escalations"
+          accent="amber"
+        />
+        <StatCard
+          icon={FileCode2}
+          label="Active policies"
+          value={String(activePolicies.length)}
+          href="/ops/policies"
+          accent="cyan"
+        />
+      </div>
 
-      {/* 3 Core Operational Pillars (Interactive Cards) */}
-      <section className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Card 1: Escalation Queue */}
-        <div className="p-6 rounded-2xl bg-surface border border-surface-border flex flex-col justify-between hover:border-surface-borderHover transition-all">
-          <div>
-            <div className="flex items-center justify-between mb-4">
-              <div className="flex items-center gap-2 text-amber-400">
-                <ShieldAlert className="w-5 h-5" />
-                <h2 className="font-display font-bold text-white text-base">
-                  Escalation Queue
-                </h2>
-              </div>
-              <span className="text-xs font-mono text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/30">
-                {openEscalations.length} Open
-              </span>
-            </div>
-
-            <p className="text-xs text-slate-400 mb-5 font-sans">
-              Human-in-the-Loop decision required for disputed transactions and hardware anomalies.
-            </p>
-
-            <div className="space-y-2.5 font-mono text-xs">
-              <div className="p-2.5 rounded-lg bg-surface-secondary/70 border border-surface-border flex items-center justify-between">
-                <span className="text-slate-300">P1 (Urgent Reversals)</span>
-                <span className="text-rose-400 font-bold">{p1Escalations.length} Pending</span>
-              </div>
-              <div className="p-2.5 rounded-lg bg-surface-secondary/70 border border-surface-border flex items-center justify-between">
-                <span className="text-slate-300">P2 (Hardware Latency)</span>
-                <span className="text-amber-400 font-semibold">1 Alert</span>
-              </div>
-              <div className="p-2.5 rounded-lg bg-surface-secondary/70 border border-surface-border flex items-center justify-between">
-                <span className="text-slate-300">P3-P4 (Recon & Supplies)</span>
-                <span className="text-slate-400 font-semibold">2 Tickets</span>
-              </div>
-            </div>
-          </div>
-
-          <div className="pt-5 mt-4 border-t border-surface-border">
-            <Link
-              href="/ops/escalations"
-              className="w-full flex items-center justify-between text-xs font-mono text-amber-400 hover:text-amber-300 group"
-            >
-              <span>Manage Escalation Queue</span>
-              <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform" />
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="p-5 rounded-2xl bg-surface border border-surface-border space-y-3">
+          <div className="flex items-center justify-between">
+            <h2 className="font-display font-bold text-white flex items-center gap-2">
+              <Activity className="w-4 h-4 text-rose-400" /> Escalation queue
+            </h2>
+            <Link href="/ops/escalations" className="text-xs text-cyan-300 inline-flex items-center gap-1">
+              Open <ArrowRight className="w-3 h-3" />
             </Link>
           </div>
+          {openEscalations.slice(0, 4).map((e) => (
+            <Link
+              key={e.escalationId}
+              href={`/ops/escalations/${e.escalationId}`}
+              className="block p-3 rounded-xl bg-surface-secondary border border-surface-border hover:border-amber-500/40"
+            >
+              <div className="flex justify-between text-xs font-mono text-slate-400">
+                <span>{e.escalationId}</span>
+                <span>{e.priority}</span>
+              </div>
+              <p className="text-sm text-white mt-1">{e.issue}</p>
+            </Link>
+          ))}
+          {openEscalations.length === 0 && (
+            <p className="text-sm text-slate-500">No open escalations in Cosmos.</p>
+          )}
         </div>
 
-        {/* Card 2: Sales Pipeline & Agent Handoffs */}
-        <div className="p-6 rounded-2xl bg-surface border border-surface-border flex flex-col justify-between hover:border-surface-borderHover transition-all">
-          <div>
-            <div className="flex items-center justify-between mb-4">
-              <div className="flex items-center gap-2 text-emerald-400">
-                <TrendingUp className="w-5 h-5" />
-                <h2 className="font-display font-bold text-white text-base">
-                  Multi-Agent Sales Board
-                </h2>
-              </div>
-              <span className="text-xs font-mono text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/30">
-                {activeLeads.length} In Flight
-              </span>
-            </div>
-
-            <p className="text-xs text-slate-400 mb-5 font-sans">
-              Sequential stage tracking across Agent1 (Outreach), Agent2 (Quoting), and Agent3 (Onboard).
-            </p>
-
-            <div className="space-y-2.5 font-mono text-xs">
-              <div className="p-2.5 rounded-lg bg-surface-secondary/70 border border-surface-border flex items-center justify-between">
-                <span className="text-slate-300">Needing Ops Handoff Review</span>
-                <span className="text-emerald-400 font-bold">
-                  {leadsNeedingHandoff.length} Deals
-                </span>
-              </div>
-              <div className="p-2.5 rounded-lg bg-surface-secondary/70 border border-surface-border flex items-center justify-between">
-                <span className="text-slate-300">Active Quoted Pipeline Value</span>
-                <span className="text-white font-bold">₹3,95,000</span>
-              </div>
-              <div className="p-2.5 rounded-lg bg-surface-secondary/70 border border-surface-border flex items-center justify-between">
-                <span className="text-slate-300">Stage Skipping Safety Rule</span>
-                <span className="text-emerald-400 text-[10px]">ENFORCED</span>
-              </div>
-            </div>
-          </div>
-
-          <div className="pt-5 mt-4 border-t border-surface-border">
-            <Link
-              href="/ops/sales/pipeline"
-              className="w-full flex items-center justify-between text-xs font-mono text-emerald-400 hover:text-emerald-300 group"
-            >
-              <span>View Sales Pipeline Kanban</span>
-              <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform" />
+        <div className="p-5 rounded-2xl bg-surface border border-surface-border space-y-3">
+          <div className="flex items-center justify-between">
+            <h2 className="font-display font-bold text-white flex items-center gap-2">
+              <TrendingUp className="w-4 h-4 text-emerald-400" /> Sales leads
+            </h2>
+            <Link href="/ops/sales/pipeline" className="text-xs text-emerald-300 inline-flex items-center gap-1">
+              Follow & reach out <ArrowRight className="w-3 h-3" />
             </Link>
           </div>
-        </div>
-
-        {/* Card 3: Regulatory Policies & RAG Ingestion */}
-        <div className="p-6 rounded-2xl bg-surface border border-surface-border flex flex-col justify-between hover:border-surface-borderHover transition-all">
-          <div>
-            <div className="flex items-center justify-between mb-4">
-              <div className="flex items-center gap-2 text-purple-400">
-                <FileCode2 className="w-5 h-5" />
-                <h2 className="font-display font-bold text-white text-base">
-                  AI Policy Governance
-                </h2>
-              </div>
-              <span className="text-xs font-mono text-purple-400 bg-purple-500/10 px-2 py-0.5 rounded border border-purple-500/30">
-                {activePolicies.length} Active
-              </span>
-            </div>
-
-            <p className="text-xs text-slate-400 mb-5 font-sans">
-              Compliance vector index: Current active policy strictly beats historical cases.
-            </p>
-
-            <div className="space-y-2.5 font-mono text-xs">
-              <div className="p-2.5 rounded-lg bg-surface-secondary/70 border border-surface-border flex items-center justify-between">
-                <span className="text-slate-300">Active Rule: PAYMENT-DUPLICATE-V2</span>
-                <span className="text-purple-300 text-[11px]">v2.4.1</span>
-              </div>
-              <div className="p-2.5 rounded-lg bg-surface-secondary/70 border border-surface-border flex items-center justify-between">
-                <span className="text-slate-300">Hardware Rule: POL-SBX-001</span>
-                <span className="text-purple-300 text-[11px]">v1.8.0</span>
-              </div>
-              <div className="p-2.5 rounded-lg bg-surface-secondary/70 border border-surface-border flex items-center justify-between">
-                <span className="text-slate-300">RAG Pipeline Destination</span>
-                <span className="text-slate-400 text-[10px]">n8n Vector Store</span>
-              </div>
-            </div>
-          </div>
-
-          <div className="pt-5 mt-4 border-t border-surface-border">
+          <p className="text-xs text-slate-400 font-mono">
+            Active: {activeLeads.length} · Quote/Negotiate handoffs: {leadsNeedingHandoff.length}
+          </p>
+          {activeLeads.slice(0, 4).map((l) => (
             <Link
-              href="/ops/policies"
-              className="w-full flex items-center justify-between text-xs font-mono text-purple-400 hover:text-purple-300 group"
+              key={l.id}
+              href={`/ops/sales/leads/${l.id}`}
+              className="block p-3 rounded-xl bg-surface-secondary border border-surface-border hover:border-emerald-500/40"
             >
-              <span>Inspect Active Policies</span>
-              <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform" />
+              <div className="flex justify-between text-xs font-mono text-slate-400">
+                <span>{l.id}</span>
+                <span>{l.currentStage}</span>
+              </div>
+              <p className="text-sm text-white mt-1">{l.businessName}</p>
+              <p className="text-[11px] text-emerald-400/80 mt-1">Open lead → Reach out</p>
             </Link>
-          </div>
+          ))}
         </div>
-      </section>
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs font-mono text-slate-400">
+        <div className="p-3 rounded-xl border border-surface-border flex items-center gap-2">
+          <Bot className="w-4 h-4 text-cyan-400" /> Chat → n8n Orchestrator
+        </div>
+        <div className="p-3 rounded-xl border border-surface-border flex items-center gap-2">
+          <Layers className="w-4 h-4 text-amber-400" /> Ingest → n8n RAG
+        </div>
+        <div className="p-3 rounded-xl border border-surface-border flex items-center gap-2">
+          <Users className="w-4 h-4 text-emerald-400" /> Staff auth = demo
+        </div>
+        <div className="p-3 rounded-xl border border-surface-border flex items-center gap-2">
+          <CheckCircle2 className="w-4 h-4 text-slate-400" /> HIL decisions → Cosmos
+        </div>
+      </div>
     </div>
+  );
+}
+
+function StatCard({
+  icon: Icon,
+  label,
+  value,
+  href,
+  accent,
+}: {
+  icon: React.ComponentType<{ className?: string }>;
+  label: string;
+  value: string;
+  href: string;
+  accent: "rose" | "amber" | "cyan";
+}) {
+  const color =
+    accent === "rose"
+      ? "text-rose-300 border-rose-500/30"
+      : accent === "amber"
+        ? "text-amber-300 border-amber-500/30"
+        : "text-cyan-300 border-cyan-500/30";
+  return (
+    <Link
+      href={href}
+      className={`p-5 rounded-2xl bg-surface border ${color} hover:bg-surface-secondary transition-colors`}
+    >
+      <div className="flex items-center gap-2 text-xs font-mono mb-2">
+        <Icon className="w-4 h-4" />
+        {label}
+      </div>
+      <p className="font-display text-3xl font-bold text-white">{value}</p>
+      <p className="text-[11px] text-slate-500 mt-2 inline-flex items-center gap-1">
+        <Clock className="w-3 h-3" /> Cosmos snapshot
+      </p>
+    </Link>
   );
 }

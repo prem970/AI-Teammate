@@ -140,7 +140,7 @@ export function OpsNavbar({ session }: OpsNavbarProps) {
             </div>
 
             <span className="text-slate-600 hidden sm:inline">•</span>
-            <span className="text-slate-400 hidden sm:inline font-mono">MCP Guard Active</span>
+            <span className="text-slate-400 hidden sm:inline font-mono">HIL: human decision required</span>
           </div>
         </div>
       </div>

@@ -92,7 +92,7 @@ export default function OpsAssistantPage() {
           Internal Policy & Regulatory Knowledge Assistant
         </h1>
         <p className="text-xs text-slate-400 font-mono mt-0.5">
-          Real-time semantic search over RAG policy vectors, NPCI switch specifications, and operational SOPs.
+          Real retrieval over Azure AI Search + Cosmos policy registry (no invented clauses).
         </p>
       </div>
 
