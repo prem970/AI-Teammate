@@ -18,7 +18,7 @@ export async function POST(request: NextRequest) {
     if (n8nIngestUrl && n8nIngestUrl.trim().length > 0) {
       try {
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 12000);
+        const timeoutId = setTimeout(() => controller.abort(), 120000);
 
         const upstreamRes = await fetch(n8nIngestUrl, {
           method: "POST",
@@ -26,14 +26,17 @@ export async function POST(request: NextRequest) {
             "Content-Type": "application/json",
             "X-Client-Application": "Autonomous-AI-OS-Ops-Ingest",
           },
+          // Match n8n rag-ingest-azure-ai-search webhook field names
           body: JSON.stringify({
+            text: content,
+            content,
             source: source || "ops_policy_upload",
             policy_id,
             policy_version: policy_version || "v1.0.0",
             product_id,
-            category: category || "General",
+            category: category || "policy",
             doc_type: doc_type || "markdown",
-            content,
+            index_name: "knowledge-index",
             timestamp: new Date().toISOString(),
           }),
           signal: controller.signal,
@@ -64,24 +67,14 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Default Fallback: Production-grade RAG Ingest Simulation
-    const charCount = content.length;
-    const estimatedChunks = Math.max(1, Math.ceil(charCount / 450));
-
-    return NextResponse.json({
-      success: true,
-      message: `Policy ${policy_id} (${policy_version}) successfully tokenized and embedded into Vector Store.`,
-      ingestStats: {
-        policyId: policy_id,
-        version: policy_version,
-        product: product_id,
-        chunksIndexed: estimatedChunks,
-        embeddingModel: "text-embedding-3-small (1536d)",
-        targetCollection: "autonomous_policies_rag",
-        pipelineStatus: "ACTIVE",
-        ingestedAt: new Date().toISOString(),
+    return NextResponse.json(
+      {
+        success: false,
+        error:
+          "N8N_RAG_INGEST_URL is not configured. Refusing to claim vector embed success without calling the ingest webhook.",
       },
-    });
+      { status: 503 }
+    );
   } catch (error: unknown) {
     const errorMsg = error instanceof Error ? error.message : "Server error";
     return NextResponse.json(
