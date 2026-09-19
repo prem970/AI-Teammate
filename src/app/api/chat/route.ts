@@ -1,5 +1,49 @@
 import { NextRequest, NextResponse } from "next/server";
-import { ChatApiRequest, ChatApiResponse } from "@/lib/types";
+import { ChatApiRequest } from "@/lib/types";
+import {
+  listCustomerEscalations,
+  findCustomerEscalationsMatching,
+  getActivePolicyById,
+  isCosmosLive,
+} from "@/lib/cosmos/repository";
+import { detectHilFromToolCalls } from "@/lib/hilDetect";
+import {
+  buildRefundCreditGrounding,
+  ensurePolicyChangeInReply,
+  isRefundBankCreditQuestion,
+  type PolicyChatGrounding,
+} from "@/lib/policyChatGrounding";
+
+function isOpenCustomerStatus(status: string): boolean {
+  return status !== "RESOLVED";
+}
+
+function mapOpen(e: {
+  escalationId: string;
+  issue: string;
+  status: string;
+  recommendedAction: string;
+  relatedOrderId?: string;
+  policyId: string;
+}) {
+  return {
+    escalationId: e.escalationId,
+    issue: e.issue,
+    status: e.status,
+    recommendedAction: e.recommendedAction,
+    relatedOrderId: e.relatedOrderId,
+    policyId: e.policyId,
+  };
+}
+
+async function resolveRefundGrounding(
+  message: string
+): Promise<PolicyChatGrounding | null> {
+  if (!isRefundBankCreditQuestion(message) || !isCosmosLive()) return null;
+  const active = await getActivePolicyById("POL-PAY-REFUND-CREDIT");
+  if (!active) return null;
+  return buildRefundCreditGrounding(active);
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -13,7 +57,6 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Check for optional intentional error simulation trigger
     if (message.toLowerCase().includes("trigger_error")) {
       return NextResponse.json(
         { error: "Simulated Orchestrator Upstream Timeout (504 Gateway Timeout)" },
@@ -22,197 +65,238 @@ export async function POST(request: NextRequest) {
     }
 
     const n8nUrl = process.env.N8N_CS_ORCHESTRATOR_URL;
+    const grounding = await resolveRefundGrounding(message);
 
-    // If an upstream n8n orchestrator URL is configured in environment
-    if (n8nUrl && n8nUrl.trim().length > 0) {
+    let openEscalations: ReturnType<typeof mapOpen>[] = [];
+    if (customer_id && isCosmosLive()) {
       try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 10000);
+        const all = await listCustomerEscalations(customer_id);
+        openEscalations = all.filter((e) => isOpenCustomerStatus(e.status)).map(mapOpen);
+      } catch {
+        openEscalations = [];
+      }
+    }
 
-        const upstreamResponse = await fetch(n8nUrl, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Accept: "application/json",
-            "X-Client-Application": "Autonomous-AI-OS-Customer-Portal",
-          },
-          body: JSON.stringify({
-            message,
-            customer_id,
-            order_id,
-            tid,
-            timestamp: new Date().toISOString(),
-          }),
-          signal: controller.signal,
-        });
-
-        clearTimeout(timeoutId);
-
-        if (!upstreamResponse.ok) {
-          const errText = await upstreamResponse.text();
-          return NextResponse.json(
-            {
-              error: `Upstream Autonomous Orchestrator returned status ${upstreamResponse.status}: ${errText || "No response details"}`,
-            },
-            { status: 502 }
-          );
-        }
-
-        const upstreamData = await upstreamResponse.json();
+    // Demo path: if Cosmos has current refund policy but orchestrator URL missing, still answer from policy.
+    if (!n8nUrl?.trim()) {
+      if (grounding) {
         return NextResponse.json({
-          reply:
-            upstreamData.reply ||
-            upstreamData.output ||
-            upstreamData.message ||
-            "Orchestrator acknowledged your request without text output.",
-          trace: upstreamData.trace,
-          suggestedActions: upstreamData.suggestedActions,
+          reply: grounding.answerForMerchant,
+          trace: {
+            intent: "POLICY_REFUND_CREDIT_TIMELINE",
+            agentsInvolved: ["Knowledge", "Policy"],
+            decision: "REPLY_CURRENT_POLICY",
+            policyId: `${grounding.policyId} ${grounding.version}`,
+            confidence: 0.95,
+            latencyMs: 0,
+            timestamp: new Date().toISOString(),
+          },
+          open_escalations: openEscalations,
+          policy_grounding: grounding,
+          hil_note: "Answered from active Cosmos policy (orchestrator URL not configured).",
         });
-      } catch (err: unknown) {
-        const errorMessage = err instanceof Error ? err.message : "Network error";
+      }
+      return NextResponse.json(
+        {
+          error:
+            "N8N_CS_ORCHESTRATOR_URL is not configured. Chat will not invent order, payment, or device outcomes.",
+          demo: false,
+        },
+        { status: 503 }
+      );
+    }
+
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 180000);
+
+      const effectiveOrderId = order_id || grounding?.relatedOrderId || undefined;
+
+      const upstreamResponse = await fetch(n8nUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+          "X-Client-Application": "Autonomous-AI-OS-Customer-Portal",
+        },
+        body: JSON.stringify({
+          message,
+          customer_id,
+          order_id: effectiveOrderId,
+          tid,
+          timestamp: new Date().toISOString(),
+          open_escalations: openEscalations,
+          policy_context: grounding
+            ? {
+                policy_id: grounding.policyId,
+                policy_version: grounding.version,
+                title: grounding.title,
+                instruction: grounding.orchestratorHint,
+                merchant_facing_answer: grounding.answerForMerchant,
+                related_escalation_id: grounding.relatedEscalationId,
+              }
+            : undefined,
+          hil_context: {
+            customer_cannot_escalate: true,
+            escalation_authority: "orchestrator_via_mcp_only",
+            instruction:
+              "If risk/policy requires human judgment, call MCP escalation_create yourself. " +
+              "Never tell the merchant to escalate. Reuse open_escalations for the same order/issue. " +
+              (grounding
+                ? `For refund bank-credit timeline questions, CURRENT policy beats historical: ${grounding.orchestratorHint}`
+                : ""),
+          },
+        }),
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeoutId);
+
+      if (!upstreamResponse.ok) {
+        // Still answer policy-change demos from Cosmos if upstream fails
+        if (grounding) {
+          return NextResponse.json({
+            reply: grounding.answerForMerchant,
+            open_escalations: openEscalations,
+            policy_grounding: grounding,
+            hil_note: `Orchestrator HTTP ${upstreamResponse.status}; replied from active Cosmos policy.`,
+          });
+        }
+        const errText = await upstreamResponse.text();
         return NextResponse.json(
           {
-            error: `Failed to communicate with N8N_CS_ORCHESTRATOR_URL: ${errorMessage}`,
+            error: `Upstream Autonomous Orchestrator returned status ${upstreamResponse.status}: ${errText || "No response details"}`,
           },
           { status: 502 }
         );
       }
-    }
 
-    // Default Fallback: Production-grade Mock Agent Dispatcher
-    // Used for previewing Paytm-like merchant workflows when n8n is not yet plugged in
-    const normalized = message.toLowerCase();
-    const startTime = Date.now();
+      const upstreamData = await upstreamResponse.json();
+      let replyText =
+        upstreamData.reply ||
+        upstreamData.output ||
+        upstreamData.message ||
+        upstreamData.text ||
+        (typeof upstreamData === "string" ? upstreamData : null) ||
+        "Orchestrator acknowledged your request without text output.";
 
-    let reply = "";
-    let intent = "GENERAL_INQUIRY";
-    let agentsInvolved = ["AutonomousSupervisorAgent"];
-    let decision = "ROUTED_TO_DEFAULT_ASSIST";
-    let policyId = "POL-CORE-HELP-V1";
-    let confidence = 0.95;
-    const suggestedActions: ChatApiResponse["suggestedActions"] = [];
+      if (grounding && typeof replyText === "string") {
+        replyText = ensurePolicyChangeInReply(replyText, grounding);
+      }
 
-    if (
-      normalized.includes("dup") ||
-      normalized.includes("dispute") ||
-      normalized.includes("ord-dup-1001") ||
-      order_id?.includes("DUP") ||
-      normalized.includes("double debit")
-    ) {
-      intent = "PAYMENT_DISPUTE_RECONCILIATION";
-      agentsInvolved = [
-        "PaymentDisputeAgent",
-        "NPCISwitchVerificationAgent",
-        "SettlementProtectionGuard",
-      ];
-      decision = "AUTONOMOUS_REFUND_MATCH_VERIFIED";
-      policyId = "POL-AUTO-DISPUTE-V2.4";
-      confidence = 0.98;
+      const hilSignal = detectHilFromToolCalls(upstreamData);
 
-      reply =
-        "Regarding order **ORD-DUP-1001** (₹1,450.00): Our autonomous switch auditor detected a transient timeout acknowledgment with Axis Bank remitter switch (Code: U69). " +
-        "Your SoundBox played a single audio receipt, while the customer's duplicate debit has already been captured into escalation package **ESC-90214**. " +
-        "The excess debit was automatically returned to the remitter's UPI account. Your merchant settlement ledger remains protected and balanced.";
+      let refreshed = openEscalations;
+      let matchedFromDb: ReturnType<typeof mapOpen>[] = [];
 
-      suggestedActions.push(
-        {
-          label: "Inspect Escalation Package ESC-90214",
-          action: "VIEW_ESCALATION",
-          targetId: "ESC-90214",
-        },
-        {
-          label: "View Disputed Order Details",
-          action: "VIEW_ORDER",
-          targetId: "ORD-DUP-1001",
+      if (customer_id && isCosmosLive()) {
+        try {
+          if (hilSignal.detected) {
+            await new Promise((r) => setTimeout(r, 800));
+          }
+
+          const orderHint = effectiveOrderId || hilSignal.orderIds[0] || undefined;
+
+          if (hilSignal.detected) {
+            const found = await findCustomerEscalationsMatching({
+              customerId: customer_id,
+              orderId: orderHint,
+              escalationIds: hilSignal.escalationIds,
+            });
+            matchedFromDb = found.map(mapOpen);
+          }
+
+          const all = await listCustomerEscalations(customer_id);
+          refreshed = all.filter((e) => isOpenCustomerStatus(e.status)).map(mapOpen);
+
+          if (matchedFromDb.length) {
+            const openMatched = matchedFromDb.filter((e) => isOpenCustomerStatus(e.status));
+            if (openMatched.length) refreshed = openMatched;
+          }
+        } catch {
+          /* keep prior */
+        }
+      }
+
+      let trace = upstreamData.trace;
+      if (grounding) {
+        trace = {
+          ...(typeof trace === "object" && trace ? trace : {}),
+          intent: "POLICY_REFUND_CREDIT_TIMELINE",
+          agentsInvolved: [
+            ...((trace as { agentsInvolved?: string[] })?.agentsInvolved || ["Orchestrator"]),
+            "Policy",
+          ],
+          decision: "REPLY_CURRENT_POLICY",
+          policyId: `${grounding.policyId} ${grounding.version}`,
+          confidence: 0.95,
+          latencyMs: (trace as { latencyMs?: number })?.latencyMs ?? 0,
+          timestamp: new Date().toISOString(),
+        };
+      } else if (!trace && typeof replyText === "string" && /Intent\s*->/i.test(replyText)) {
+        trace = {
+          intent: "ORCHESTRATOR_MULTI_AGENT",
+          agentsInvolved: ["Orchestrator"],
+          decision: hilSignal.detected ? "ESCALATE_HUMAN" : "RESOLVE_OR_REPLY",
+          policyId: "FROM_ORCHESTRATOR_TRACE",
+          confidence: 0.9,
+          latencyMs: 0,
+          timestamp: new Date().toISOString(),
+          raw: replyText.slice(0, 2000),
+        };
+      } else if (trace && hilSignal.detected) {
+        trace = { ...trace, decision: trace.decision || "ESCALATE_HUMAN" };
+      }
+
+      const suggestedActions = (upstreamData.suggestedActions || []).filter(
+        (a: { action?: string; label?: string }) => {
+          const blob = `${a.action || ""} ${a.label || ""}`.toLowerCase();
+          return !blob.includes("create_escalation") && !blob.includes("escalate now");
         }
       );
-    } else if (
-      normalized.includes("soundbox") ||
-      normalized.includes("audio") ||
-      normalized.includes("volume") ||
-      normalized.includes("tid-sbx") ||
-      tid
-    ) {
-      intent = "HARDWARE_TELEMETRY_DIAGNOSTICS";
-      agentsInvolved = [
-        "HardwareTelemetryAgent",
-        "SoundBoxFirmwareAgent",
-        "M2MConnectivityAgent",
-      ];
-      decision = "TELEMETRY_HEALTH_AFFIRMED";
-      policyId = "POL-HW-TELEMETRY-V1.8";
-      confidence = 0.96;
 
-      reply =
-        "Hardware telemetry scan completed for **TID-SBX-82931** (Paytm SoundBox 4G Dual Sim): " +
-        "4G VoLTE signal is strong at 94% on Airtel M2M. Battery level is at 88% with audio heartbeat functioning normally. " +
-        "Volume is currently set to Level 8. An over-the-air acoustic test packet was acknowledged in 142ms.";
-
-      suggestedActions.push({
-        label: "Open Device Telemetry Panel",
-        action: "VIEW_DEVICE",
-        targetId: "TID-SBX-82931",
-      });
-    } else if (
-      normalized.includes("settle") ||
-      normalized.includes("payout") ||
-      normalized.includes("bank") ||
-      normalized.includes("account")
-    ) {
-      intent = "SETTLEMENT_LEDGER_INQUIRY";
-      agentsInvolved = [
-        "SettlementEngineAgent",
-        "BankingPartnerSyncAgent",
-      ];
-      decision = "LEDGER_BALANCE_CURRENT";
-      policyId = "POL-AUTO-RECON-V4.1";
-      confidence = 0.99;
-
-      reply =
-        "Your primary settlement account **HDFC Bank (•••• 8109)** is active and verified. " +
-        "Today's gross settled volume is **₹4,319.00** across 2 settled transactions. " +
-        "The automated daily clearing cycle will transfer funds by 06:00 PM IST without any manual intervention required.";
-
-      suggestedActions.push({
-        label: "View Settled Orders",
-        action: "VIEW_ORDERS",
-      });
-    } else {
-      reply =
-        "Welcome to the Autonomous AI OS for Paytm merchants. I am actively monitoring your SoundBox terminals, Smart POS units, UPI transactions, and autonomous settlement disputes. " +
-        "You can ask me to run a telemetry ping on your SoundBox, verify transaction status for disputed orders like ORD-DUP-1001, or check escalation packages.";
-
-      suggestedActions.push(
-        {
-          label: "Audit Disputed Order ORD-DUP-1001",
-          action: "RUN_QUERY",
-          targetId: "What is the status of disputed transaction ORD-DUP-1001?",
+      return NextResponse.json({
+        reply: replyText,
+        trace,
+        suggestedActions,
+        usage: upstreamData.usage,
+        toolCalls: upstreamData.toolCalls,
+        open_escalations: refreshed,
+        policy_grounding: grounding || undefined,
+        hil: {
+          detected_from_tools: hilSignal.detected,
+          tool_names: hilSignal.toolNames,
+          escalation_ids_in_tools: hilSignal.escalationIds,
+          order_ids_in_tools: hilSignal.orderIds,
+          txn_ids_in_tools: hilSignal.txnIds,
+          status_source: "cosmos",
+          packages: matchedFromDb.length ? matchedFromDb : refreshed,
         },
+        hil_note: hilSignal.detected
+          ? "HIL tool activity detected in response — case status loaded from Cosmos (view-only for merchant)."
+          : grounding
+            ? "Refund bank-credit question grounded on active Cosmos policy (current beats historical)."
+            : refreshed.length > 0
+              ? "Open case(s) already in Cosmos for this merchant (view-only)."
+              : "No HIL package in DB for this turn.",
+      });
+    } catch (err: unknown) {
+      if (grounding) {
+        return NextResponse.json({
+          reply: grounding.answerForMerchant,
+          open_escalations: openEscalations,
+          policy_grounding: grounding,
+          hil_note: "Orchestrator unreachable; replied from active Cosmos policy.",
+        });
+      }
+      const errorMessage = err instanceof Error ? err.message : "Network error";
+      return NextResponse.json(
         {
-          label: "Run SoundBox Telemetry Diagnostic",
-          action: "RUN_QUERY",
-          targetId: "Run a full telemetry health check on TID-SBX-82931",
-        }
+          error: `Failed to communicate with N8N_CS_ORCHESTRATOR_URL: ${errorMessage}`,
+        },
+        { status: 502 }
       );
     }
-
-    const latencyMs = Date.now() - startTime + 180; // realistic processing time
-
-    const responsePayload: ChatApiResponse = {
-      reply,
-      trace: {
-        intent,
-        agentsInvolved,
-        decision,
-        policyId,
-        confidence,
-        latencyMs,
-        timestamp: new Date().toISOString(),
-      },
-      suggestedActions,
-    };
-
-    return NextResponse.json(responsePayload);
   } catch (error: unknown) {
     const errMessage = error instanceof Error ? error.message : "Internal Server Error";
     return NextResponse.json(
