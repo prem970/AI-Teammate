@@ -80,6 +80,14 @@ export interface Escalation {
   policyId: string; // e.g. 'POL-AUTO-DISPUTE-V2.4'
   policyConfidence: number; // 0.0 - 1.0 (e.g. 0.98)
   humanCan: string[]; // Read-only for customer, e.g. ["Override AI dispute refund limit", "Initiate manual bank recon", "Dispatch field hardware engineer"]
+  /** Present after Ops HIL decision — surfaced read-only on merchant Case status */
+  resolutionDecision?: {
+    action: string;
+    decidedBy: string;
+    decidedAt: string;
+    notes?: string;
+    refundAmount?: number;
+  };
 }
 
 export interface AgentTrace {
