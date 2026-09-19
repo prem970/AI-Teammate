@@ -1,16 +1,27 @@
 import { NextRequest, NextResponse } from "next/server";
-import { updateEscalationDecision, getEscalationById } from "@/lib/opsMockData";
+import {
+  getOpsEscalationById,
+  patchEscalationDecision,
+  isCosmosLive,
+} from "@/lib/cosmos/repository";
+import { emitHilDecisionSignal } from "@/lib/cosmos/hil";
 import { HumanActionType } from "@/lib/opsTypes";
 
 export async function GET(
   _request: NextRequest,
   { params }: { params: { id: string } }
 ) {
-  const pkg = getEscalationById(params.id);
+  if (!isCosmosLive()) {
+    return NextResponse.json(
+      { error: "Cosmos not configured", dataOrigin: "unavailable" },
+      { status: 503 }
+    );
+  }
+  const pkg = await getOpsEscalationById(params.id);
   if (!pkg) {
     return NextResponse.json({ error: "Escalation package not found" }, { status: 404 });
   }
-  return NextResponse.json({ success: true, escalation: pkg });
+  return NextResponse.json({ success: true, escalation: pkg, dataOrigin: "cosmos" });
 }
 
 export async function PATCH(
@@ -18,6 +29,13 @@ export async function PATCH(
   { params }: { params: { id: string } }
 ) {
   try {
+    if (!isCosmosLive()) {
+      return NextResponse.json(
+        { error: "Cosmos not configured — cannot persist HIL decisions" },
+        { status: 503 }
+      );
+    }
+
     const body = await request.json();
     const { action, decidedBy = "Support Ops Specialist", notes = "", refundAmount } = body;
 
@@ -37,7 +55,7 @@ export async function PATCH(
       );
     }
 
-    const updated = updateEscalationDecision(
+    const updated = await patchEscalationDecision(
       params.id,
       action as HumanActionType,
       decidedBy,
@@ -47,15 +65,32 @@ export async function PATCH(
 
     if (!updated) {
       return NextResponse.json(
-        { error: `Escalation ${params.id} not found` },
+        { error: `Escalation ${params.id} not found in Cosmos` },
         { status: 404 }
       );
     }
 
+    // Cosmos + optional n8n HIL resume (N8N_HIL_RESUME_URL). No MCP changes.
+    const hil = await emitHilDecisionSignal({
+      escalation: updated,
+      action: action as HumanActionType,
+      decidedBy,
+      notes,
+      refundAmount,
+    });
+
     return NextResponse.json({
       success: true,
-      message: `Action '${action}' executed successfully on package ${params.id}`,
+      message: `Action '${action}' persisted to Cosmos escalations`,
       escalation: updated,
+      dataOrigin: "cosmos",
+      auditWritten: hil.auditWritten,
+      resumeNotify: hil.notifyStatus,
+      resumeDetail: hil.notifyDetail,
+      note:
+        hil.notifyStatus === "sent"
+          ? "Status in Cosmos; HIL resume webhook notified."
+          : "Status in Cosmos; resume webhook skipped or failed (see resumeNotify).",
     });
   } catch (err: unknown) {
     const errorMsg = err instanceof Error ? err.message : "Server error";
