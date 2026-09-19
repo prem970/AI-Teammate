@@ -21,14 +21,14 @@ export function StatusBadge({ type, value }: StatusBadgeProps) {
         return (
           <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-mono font-semibold bg-rose-500/15 text-rose-400 border border-rose-500/40 animate-pulse">
             <span className="w-1.5 h-1.5 rounded-full bg-rose-500" />
-            Disputed (AI Investigating)
+            Disputed
           </span>
         );
       case "pending":
         return (
           <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-mono font-medium bg-amber-500/10 text-amber-400 border border-amber-500/25">
             <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
-            Pending NPCI
+            Pending
           </span>
         );
       case "refunded":
@@ -48,14 +48,14 @@ export function StatusBadge({ type, value }: StatusBadgeProps) {
         return (
           <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-mono font-medium bg-cyan-500/10 text-cyan-400 border border-cyan-500/25">
             <span className="w-1.5 h-1.5 rounded-full bg-cyan-400" />
-            Online & Linked
+            Active
           </span>
         );
       case "needs_attention":
         return (
           <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-mono font-medium bg-amber-500/15 text-amber-400 border border-amber-500/35">
             <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
-            Degraded Signal
+            Needs attention
           </span>
         );
       case "offline":
@@ -75,21 +75,21 @@ export function StatusBadge({ type, value }: StatusBadgeProps) {
         return (
           <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-mono font-medium bg-cyan-500/15 text-cyan-300 border border-cyan-500/35">
             <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-ping" />
-            AI Investigating
+            Investigating
           </span>
         );
       case "QUEUED_FOR_HUMAN":
         return (
           <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-mono font-medium bg-amber-500/15 text-amber-300 border border-amber-500/30">
             <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
-            Queued for Human
+            Queued for human
           </span>
         );
       case "RESOLVED":
         return (
           <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-mono font-medium bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-            Auto-Resolved
+            Resolved
           </span>
         );
       default:
