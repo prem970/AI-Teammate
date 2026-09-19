@@ -4,11 +4,12 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
-    "start": "next start"
+    "dev": "node ./node_modules/next/dist/bin/next dev",
+    "build": "node ./node_modules/next/dist/bin/next build",
+    "start": "node ./node_modules/next/dist/bin/next start"
   },
   "dependencies": {
+    "@azure/cosmos": "^4.10.1",
     "@types/node": "^20.14.0",
     "@types/react": "^18.3.31",
     "@types/react-dom": "^18.3.7",
