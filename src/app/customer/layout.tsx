@@ -1,9 +1,10 @@
 import React from "react";
 import { getCurrentCustomerSession } from "@/lib/auth";
-import { getCustomer } from "@/lib/mockData";
+import { findCustomerById, isCosmosLive } from "@/lib/cosmos/repository";
 import { CustomerNavbar } from "@/components/shell/CustomerNavbar";
 import { CustomerFooter } from "@/components/shell/CustomerFooter";
 import { redirect } from "next/navigation";
+import type { Customer } from "@/lib/types";
 
 export default async function CustomerLayout({
   children,
@@ -12,12 +13,29 @@ export default async function CustomerLayout({
 }) {
   const session = await getCurrentCustomerSession();
 
-  // If no valid session, redirect to customer login
   if (!session || session.role !== "customer") {
     redirect("/login/customer");
   }
 
-  const customer = getCustomer(session.customerId);
+  const fromCosmos = isCosmosLive()
+    ? await findCustomerById(session.customerId)
+    : null;
+
+  const customer: Customer =
+    fromCosmos || {
+      id: session.customerId,
+      mid: "UNKNOWN",
+      name: session.name,
+      email: session.email,
+      businessName: session.name,
+      businessType: "Merchant",
+      segment: "unknown",
+      preferredChannel: "WhatsApp",
+      phone: "",
+      registeredDate: "",
+      settlementAccount: "Unavailable",
+      kycStatus: "PENDING_UPDATE",
+    };
 
   return (
     <div className="flex flex-col min-h-screen bg-background text-slate-100 selection:bg-cyan-500/20 selection:text-cyan-300">

@@ -27,12 +27,17 @@ export function CustomerNavbar({ customer }: CustomerNavbarProps) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
 
-  const navItems = [
+  const navItems: {
+    label: string;
+    href: string;
+    icon: typeof Cpu;
+    badge?: string;
+  }[] = [
     { label: "Home", href: "/customer", icon: Cpu },
     { label: "Chat", href: "/customer/chat", icon: MessageSquare },
     { label: "Orders", href: "/customer/orders", icon: Receipt },
     { label: "Devices", href: "/customer/devices", icon: Radio },
-    { label: "Escalations", href: "/customer/escalations", icon: AlertTriangle, badge: "1" },
+    { label: "Case status", href: "/customer/escalations", icon: AlertTriangle },
     { label: "Account", href: "/customer/account", icon: User },
   ];
 
@@ -54,8 +59,8 @@ export function CustomerNavbar({ customer }: CustomerNavbarProps) {
         <div className="max-w-7xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-3">
             <span className="flex items-center gap-1.5 text-cyan-400 font-mono text-[11px]">
-              <span className="h-1.5 w-1.5 rounded-full bg-cyan-400 animate-ping" />
-              AUTONOMOUS AI OS • ACTIVE TELEMETRY
+              <span className="h-1.5 w-1.5 rounded-full bg-cyan-400" />
+              AUTONOMOUS AI OS • MERCHANT PORTAL
             </span>
             <span className="hidden md:inline text-slate-500">|</span>
             <span className="hidden md:inline text-slate-300 font-medium">
@@ -63,11 +68,11 @@ export function CustomerNavbar({ customer }: CustomerNavbarProps) {
             </span>
           </div>
           <div className="flex items-center gap-3 font-mono text-[11px] text-slate-400">
-            <span className="hidden sm:inline text-emerald-400 flex items-center gap-1">
-              <ShieldCheck className="w-3.5 h-3.5 inline" /> NPCI Settlement Reconciled
+            <span className="hidden sm:inline text-slate-400 flex items-center gap-1">
+              <ShieldCheck className="w-3.5 h-3.5 inline" /> Data: Cosmos when configured
             </span>
             <span className="text-slate-500 hidden sm:inline">•</span>
-            <span>Policy: v2.4</span>
+            <span>Chat: n8n Orchestrator</span>
           </div>
         </div>
       </div>
